@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Chappie Has Ears</string>
+    <string name="hello_world">Hello Chappie!</string>
+    <string name="action_settings">Settings</string>
+</resources>
