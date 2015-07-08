@@ -1,19 +1,34 @@
 // Copyright Enrico Ros 2016. All rights reserved.
 
 #include <Arduino.h>
+
+// uncomment the following for talking directly to the BT module (after initialization)
+//#define DEBUG_SWCONSOLE_2_BT_PASSTHROUGH
+
+// uncomment the following to give commands from the Console: U,D,M,L,R
+#define DEBUG_SWCONSOLE_2_SERVOS
+
+
+// misc constants
+#define LILY_PIN_LED            LED_BUILTIN // D13
+#define LILY_HW_SERIAL_SPEED    57600   // fixed, can't go beyond it (errors)
+
+// additional console
 #include <SoftwareSerial.h>
+#define LILY_SW_CONSOLE_SPEED   57600
+#define LILY_PIN_SW_CONSOLE_RX  2  // D2
+#define LILY_PIN_SW_CONSOLE_TX  3  // D3
 
-#define LILY_LED                LED_BUILTIN // D13
-#define LILY_HW_SERIAL_SPEED    57600
-
+// BT pins
 #define BT_ENABLE
-#define BT_RECONFIG_JUMPER_1    6
-#define BT_RECONFIG_JUMPER_2    7
+#define LILY_PIN_BT_RECONFIG    4 // set to GND to reconfig
 
+// Servo(s) pins
 #define SERVO_ENABLE
-#define SERVO_CONTROL_LEFT      10
-#define SERVO_CONTROL_RIGHT     11
-#define SERVO_CONTROL_REFGND    9
+#define LILY_PIN_SERVO_GND      9
+#define LILY_PIN_SERVO_L_EAR    10
+#define LILY_PIN_SERVO_R_EAR    11
+
 
 
 static void initOutput(int pin, int level) {
@@ -21,15 +36,29 @@ static void initOutput(int pin, int level) {
     digitalWrite(pin, level);
 }
 
-static void configureJumper(int pin, int pinGnd) {
+/*static void configureJumper(int pin, int pinGnd) {
     pinMode(pin, INPUT);
     digitalWrite(pin, HIGH);
     initOutput(pinGnd, LOW);
 }
 
-static bool hasJumper(int pin, int /*pinGnd*/) {
+static bool hasJumper(int pin, int pinGnd_unused) {
     return digitalRead(pin) == LOW;
+}*/
+
+void crossStreams(Stream *s1, Stream *s2) {
+    while (s1 && s1->available()) {
+        const char c1 = (char)s1->read();
+        if (s2)
+            s2->print(c1);
+    }
+    while (s2 && s2->available()) {
+        const char c2 = (char)s2->read();
+        if (s1)
+            s1->print(c2);
+    }
 }
+
 
 
 #ifdef BT_ENABLE
@@ -45,57 +74,50 @@ static bool hasJumper(int pin, int /*pinGnd*/) {
  */
 class BlueLink {
     HardwareSerial *m_btSerial;
-    Stream *m_ptSerial;
+    Stream *m_console;
+#define SAFE(x) if (x) x
+#define CONSOLE SAFE(m_console)
 public:
-    BlueLink(HardwareSerial *btSerial, unsigned long blueModemSpeed = 115200, Stream *passthroughSerial = 0)
+    BlueLink(HardwareSerial *btSerial, Stream *console = 0)
         : m_btSerial(btSerial)
-        , m_ptSerial(passthroughSerial)
+        , m_console(console)
     {
-        // use a jumper to know whether to reflash the config or not
-        configureJumper(BT_RECONFIG_JUMPER_1, BT_RECONFIG_JUMPER_2);
-
-        // init communication to the module
-        m_btSerial->begin(blueModemSpeed);
-        delay(100);
     }
 
-    bool requestedReconfigure() const {
-        return hasJumper(BT_RECONFIG_JUMPER_1, BT_RECONFIG_JUMPER_2);
+    void init() const {
+        pinMode(LILY_PIN_BT_RECONFIG, INPUT_PULLUP);
+        delay(50);
+
+        // check if the user requested to reconfigure
+        if (digitalRead(LILY_PIN_BT_RECONFIG) == LOW)
+            initReconfigure();
+        else
+            initNormal();
     }
 
-    bool reConfigureModem() const {
-        // enter command mode
-        if (!writeAndConfirm("$$$", "CMD\r\n", 5, 1000))
-            return false;
-
-        // factory config
-        if (!writeAndConfirm("SF,1\n", "AOK\r\n", 5, 2000))
-            return false;
-
-        // rename device
-        if (!writeAndConfirm("SN,Chappie-Ears\n", "AOK\r\n", 5, 1000))
-            return false;
-
-        // turn config timer off
-        if (!writeAndConfirm("ST,0\n", "AOK\r\n", 5, 1000))
-            return false;
-
-        // set pin to 1337
-        if (!writeAndConfirm("SP,1337\n", "AOK\r\n", 5, 1000))
-            return false;
-        return true;
+    int readChars() {
+        int hasChars = m_btSerial->available();
+        if (!hasChars)
+            return 0;
+        CONSOLE->print("BT bytes < ");
+        while (m_btSerial->available() >= 1) {
+            CONSOLE->print((byte)m_btSerial->read());
+            CONSOLE->print(" ");
+        }
+        CONSOLE->println(">");
+        return hasChars;
     }
 
-    bool readPacket(byte *destBuffer, int maxLength) {
+    bool unused_readPacket5(byte *destBuffer, int maxLength) {
         // we need maxLength + 1 sync byte
         while (m_btSerial->available() >= (maxLength + 1)) {
             // validate the sync byte
             byte syncByte = (byte)m_btSerial->read();
             if (syncByte != 0xA5) {
                 // ERROR: we were unsynced
-                if (m_ptSerial) {
-                    m_ptSerial->print("e21: ");
-                    m_ptSerial->println((int)syncByte);
+                if (m_console) {
+                    m_console->print("e21: ");
+                    m_console->println((int)syncByte);
                 }
                 // try the next
                 continue;
@@ -114,28 +136,78 @@ public:
         return false;
     }
 
-    void loopPassthrough() {
-        while (m_btSerial->available()) {
-            char c = (char)m_btSerial->read();
-            if (m_ptSerial) {
-                //m_ptSerial->println(c);
-                m_ptSerial->print(c);
-            }
-        }
-        while (m_ptSerial && m_ptSerial->available()) {
-            m_btSerial->print((char)m_ptSerial->read());
-            //m_ptSerial->print(">B\n");
-        }
+private:
+    void initNormal() const {
+        CONSOLE->print("   * open BT... ");
+        m_btSerial->begin(LILY_HW_SERIAL_SPEED, SERIAL_8N1);
+        delay(100);
+        CONSOLE->println("done.");
     }
 
-private:
+    /* Reconf Manually with:
+     *  $$$ SF,1\n SN,Chappie-Ears\n SP,1337\n ST,0\n SU,57.6\n ---\n
+     */
+    bool initReconfigure() const {
+        CONSOLE->println("   * reconfiguraton requested ");
+
+        // jump up to the modem speed and move it down temporarily to 57600
+        if (true /*lowerBtSpeed*/) {
+            // start with the modem speed
+            CONSOLE->print("   * lowering BT modem speed to 57600.. ");
+            m_btSerial->begin(115200);
+            delay(100);
+            m_btSerial->print("$");
+            m_btSerial->print("$");
+            m_btSerial->print("$");
+            delay(100);
+            // move the modem to 57600 and in data mode
+            m_btSerial->println("U,57.6,N");
+            CONSOLE->println("done");
+        }
+
+        // now open at the right speed
+        initNormal();
+
+        CONSOLE->print("   * reconfiguring BT... ");
+
+        // enter command mode
+        if (!writeAndConfirm("$$$", "CMD\r\n", 5, 1000))
+            return false;
+
+        // factory config
+        if (!writeAndConfirm("SF,1\n", "AOK\r\n", 5, 2000))
+            return false;
+
+        // rename device
+        if (!writeAndConfirm("SN,Chappie-Ears\n", "AOK\r\n", 5, 1000))
+            return false;
+
+        // set pin to 1337
+        if (!writeAndConfirm("SP,1337\n", "AOK\r\n", 5, 1000))
+            return false;
+
+        // turn config timer off
+        if (!writeAndConfirm("ST,0\n", "AOK\r\n", 5, 1000))
+            return false;
+
+        // set the default speed
+        if (!writeAndConfirm("SU,57.6\n", "AOK\r\n", 5, 1000))
+            return false;
+
+        // go back to data mode
+        if (!writeAndConfirm("---\n", "END\r\n", 5, 1000))
+            return false;
+
+        CONSOLE->println("done.");
+        return true;
+    }
+
     bool writeAndConfirm(const char *msg, const char *expected, int length, int timeoutMs) const {
         m_btSerial->print(msg);
-        bool ok = matchReply(expected, length, timeoutMs);
-        if (!ok && m_ptSerial) {
-            m_ptSerial->print("BlueLink: exception writing: '");
-            m_ptSerial->print(msg);
-            m_ptSerial->print("'\n");
+        bool ok = (expected == 0) || matchReply(expected, length, timeoutMs);
+        if (m_console && !ok) {
+            m_console->print(ok ? "   * BlueLink: wrote: '" : "   * BlueLink: exception writing: '");
+            m_console->println(msg);
         }
         return ok;
     }
@@ -146,12 +218,13 @@ private:
             while (m_btSerial->available()) {
                 char c = (char)m_btSerial->read();
                 if (expected[sIdx] != c) {
-                    if (m_ptSerial) {
-                        m_ptSerial->print("BlueLink: expecting '");
-                        m_ptSerial->print((int)expected[sIdx]);
-                        m_ptSerial->print("' gotten '");
-                        m_ptSerial->print((int)c);
-                        m_ptSerial->print("'\n");
+                    if (m_console) {
+                        m_console->print("   * BlueLink: expected ");
+                        m_console->print((int)expected[sIdx]);
+                        m_console->print(" gotten ");
+                        m_console->print((int)c);
+                        m_console->print(" at index ");
+                        m_console->println((int)sIdx);
                     }
                     return false;
                 }
@@ -240,48 +313,41 @@ public:
 ChappieEars *sChappieEars = 0;
 #endif
 
-#define LILY_SW_CONSOLE_RX      10  // D10
-#define LILY_SW_CONSOLE_TX      11  // D11
-#define LILY_SW_CONSOLE_SPEED   57600
 
 // the software console (since the HW serial is busy with bluetooth)
-Stream *serialConsole;
+Stream *sConsole = 0;
 
 void setup() {
     // high during setup
-    initOutput(LILY_LED, HIGH);
+    initOutput(LILY_PIN_LED, HIGH);
 
     // serial console: hw serial vs software serial
-#if 0
-    SoftwareSerial *swConsole = new SoftwareSerial(LILY_SW_CONSOLE_RX, LILY_SW_CONSOLE_TX);
-    swConsole->begin(LILY_SW_CONSOLE_SPEED);
-    serialConsole = swConsole;
-#else
-    Serial.begin(LILY_HW_SERIAL_SPEED);
-    serialConsole = &Serial;
-#endif
-    serialConsole->println("Chappie Booting...");
-
-    // init Bluetooth (reconfigure module if jumper is present)
-#ifdef BT_ENABLE
-    serialConsole->println(" * init BT");
-    sBlueLink = new BlueLink(&Serial, LILY_HW_SERIAL_SPEED, serialConsole);
-    if (sBlueLink->requestedReconfigure()) {
-        serialConsole->println("   * reconfiguring BT");
-        sBlueLink->reConfigureModem();
+    bool useSwConsole = true;
+    if (useSwConsole) {
+        SoftwareSerial *swConsole = new SoftwareSerial(LILY_PIN_SW_CONSOLE_RX, LILY_PIN_SW_CONSOLE_TX);
+        swConsole->begin(LILY_SW_CONSOLE_SPEED);
+        sConsole = swConsole;
+    } else {
+        Serial.begin(LILY_HW_SERIAL_SPEED);
+        sConsole = &Serial;
     }
-#endif
+    sConsole->println("Chappie Booting...");
+
+    // init Bluetooth
+    sConsole->println(" * init BT");
+    sBlueLink = new BlueLink(&Serial, sConsole);
+    sBlueLink->init();
 
     // init ears
 #ifdef SERVO_ENABLE
-    serialConsole->println(" * init Ears");
+    sConsole->println(" * init Ears");
     sChappieEars = new ChappieEars();
-    sChappieEars->init(SERVO_CONTROL_LEFT, SERVO_CONTROL_RIGHT, SERVO_CONTROL_REFGND);
+    sChappieEars->init(LILY_PIN_SERVO_L_EAR, LILY_PIN_SERVO_R_EAR, LILY_PIN_SERVO_GND);
 #endif
 
     // explain...
-    serialConsole->println("Chappie Ready!");
-    digitalWrite(LILY_LED, LOW);
+    sConsole->println("Chappie Ready!");
+    digitalWrite(LILY_PIN_LED, LOW);
 }
 
 enum Command {
@@ -292,18 +358,17 @@ enum Command {
     Cmd_Left    = 4,
     Cmd_Right   = 5
 };
-int readCommandFromConsole(Stream *serialConsole) {
-    while (serialConsole->available()) {
-        char c = (char)serialConsole->read();
+
+#ifdef DEBUG_SWCONSOLE_2_SERVOS
+int readConsoleCommand(Stream *console) {
+    while (console->available()) {
+        char c = (char)console->read();
 
         // empty buffer
-#if 0
         delay(100);
-        while (serialConsole->available())
-            serialConsole->read();
-#endif
+        while (console->available())
+            console->read();
 
-        // serialConsole->println((int)c);
         switch (c) {
         case 'u': case 'U':
             return Cmd_Up;
@@ -319,14 +384,36 @@ int readCommandFromConsole(Stream *serialConsole) {
     }
     return Cmd_None;
 }
+#endif
+
 
 void loop() {
-    Command c = (Command)readCommandFromConsole(serialConsole);
-    if (c == Cmd_None)
+
+#ifdef DEBUG_SWCONSOLE_2_BT_PASSTHROUGH
+    crossStreams(&Serial, sConsole);
+    return;
+#endif
+
+    Command command = Cmd_None;
+
+#ifdef DEBUG_SWCONSOLE_2_SERVOS
+    command = (Command)readConsoleCommand(sConsole);
+#endif
+
+    // check the BT serial for new commands
+    if (sBlueLink) {
+        //sBlueLink->unused_readPacket5();
+        sBlueLink->readChars();
+    }
+
+    if (command == Cmd_None)
         return;
 
+    sConsole->print("Chappie Command ");
+    sConsole->println((int)command);
+
 #ifdef SERVO_ENABLE
-    switch (c) {
+    switch (command) {
     case Cmd_Up:
         sChappieEars->setLeftEar(1);
         sChappieEars->setRightEar(1);
@@ -350,8 +437,8 @@ void loop() {
     }
 #endif
 
-    digitalWrite(LILY_LED, HIGH);
+    digitalWrite(LILY_PIN_LED, HIGH);
     delay(300);
-    digitalWrite(LILY_LED, LOW);
+    digitalWrite(LILY_PIN_LED, LOW);
 }
 
