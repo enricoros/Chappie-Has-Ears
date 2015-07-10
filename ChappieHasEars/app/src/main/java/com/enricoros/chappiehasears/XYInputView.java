@@ -69,14 +69,14 @@ public class XYInputView extends View {
         mLastNx = normate(event.getX(), W);
         mLastNy = normate(event.getY(), H);
 
-        int hCount = event.getHistorySize();
+        /*int hCount = event.getHistorySize();
         for (int i = 0; i < hCount; ++i) {
             final long hDTimeMs = event.getHistoricalEventTime(i) - mStartTimeStamp;
             final float hNX = normate(event.getHistoricalX(i), W);
             final float hNY = normate(event.getHistoricalY(i), H);
             transmit(hNX, hNY, hDTimeMs);
             //Logger.wtf("TraceRecordView.historical: "+i+" d "+hDTimeMs);
-        }
+        }*/
 
         transmit(mLastNx, mLastNy, mLastDTimeMs);
 
@@ -84,19 +84,40 @@ public class XYInputView extends View {
         return true;
     }
 
+    // delayed transmission for a 10 Hz refresh rate max
+    float mNextNx = 0;
+    float mNextNy = 0;
+    long mNextdTimeMs = 0;
+    private boolean mNextTransmissionPending = false;
+    private Runnable mTransmissionRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (mListener != null)
+                mListener.onNewPoint(mNextNx, mNextNy, mNextdTimeMs);
+            mNextTransmissionPending = false;
+        }
+    };
+
     private void transmit(float nx, float ny, long dTimeMs) {
-        if (mListener != null)
-            mListener.onNewPoint(nx, ny, dTimeMs > 0 ? dTimeMs : 0);
+        final long timeMillis = System.currentTimeMillis();
+        mNextNx = nx;
+        mNextNy = ny;
+        mNextdTimeMs = dTimeMs > 0 ? dTimeMs : 0;
+        if (!mNextTransmissionPending) {
+            postDelayed(mTransmissionRunnable, 40);
+            mNextTransmissionPending = true;
+        }
     }
+
 
     @Override
     protected void onDraw(Canvas canvas) {
         final int W = getWidth();
         final int H = getHeight();
 
-        canvas.drawCircle(expand(mLastNx, W), expand(mLastNy, H), 10, mPtPaint);
+        canvas.drawCircle(expand(mLastNx, W), expand(mLastNy, H), 24, mPtPaint);
 
-        canvas.drawCircle(expand(0, W), expand(0, H), 5, mCtPaint);
+        canvas.drawCircle(expand(0, W), expand(0, H), 8, mCtPaint);
     }
 
     private float normate(float expandedVal, float scale) {

@@ -13,6 +13,8 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
+import java.util.logging.Handler;
+import java.util.logging.LogRecord;
 
 public class BluetoothLink implements IControllerOutput {
 
@@ -27,11 +29,17 @@ public class BluetoothLink implements IControllerOutput {
     private boolean mBtReceiverRegistered;
     private BluetoothDevice mBluetoothRemoteDevice;
 
+    private boolean mIsConnected;
     private ConnectThread mConnectThread;
     private ConnectedThread mConnectedThread;
 
     private static final int COMM_PACKET_SIZE = 5;
     private final byte[] mSendBuffer;
+
+    private Listener mListener;
+    interface Listener {
+        void btConnectionChanged(boolean connected);
+    }
 
     public BluetoothLink(Context context, String btDeviceName) {
         mSendBuffer = new byte[COMM_PACKET_SIZE];
@@ -60,13 +68,20 @@ public class BluetoothLink implements IControllerOutput {
         // get the device (it may be connected already)
         mBluetoothRemoteDevice = findBondedDeviceByName(mBtTargetDeviceName);
         if (mBluetoothRemoteDevice != null) {
+            Logger.userVisibleMessage("Connecting to " + mBtTargetDeviceName);
             connectToRemoteDevice();
         } else {
             Logger.info("BluetoothLink: no bluetooth device paired at startup, starting discovery");
+            Logger.userVisibleMessage("Starting discovery for " + mBtTargetDeviceName);
             mBluetoothAdapter.startDiscovery();
         }
     }
 
+    public void setListener(Listener listener) {
+        mListener = listener;
+        if (mListener != null)
+            mListener.btConnectionChanged(mIsConnected);
+    }
 
     public boolean getIsSupported() {
         return mIsSupported;
@@ -78,10 +93,16 @@ public class BluetoothLink implements IControllerOutput {
 
     @Override
     public void setCoordinates(ControllerCoords c) {
-        final boolean hasCh0 = c.channel0 != ControllerCoords.UNDEFINED;
-        final boolean hasCh1 = c.channel1 != ControllerCoords.UNDEFINED;
-        if (hasCh0 || hasCh1)
-            controlMotion(hasCh0 ? c.channel0 : 0, hasCh1 ? c.channel1 : 0);
+        final float nx = c.channel0;
+        final float ny = c.channel1;
+        final boolean hasCh0 = nx != ControllerCoords.UNDEFINED;
+        final boolean hasCh1 = ny != ControllerCoords.UNDEFINED;
+        if (hasCh0 && hasCh1) {
+            // decompose the motion
+            final float left = -ny * (nx > 0 ? (-nx + 1) : 1);
+            final float right = -ny * (nx < 0 ? (nx + 1) : 1);
+            sendEarsMotion(left, right);
+        }
     }
 
 
@@ -92,13 +113,24 @@ public class BluetoothLink implements IControllerOutput {
     }
 
     public void doTeardown() {
+        closeCurrentConnection();
+        if (mBtReceiverRegistered) {
+            mContext.unregisterReceiver(mReceiver);
+            mBtReceiverRegistered = false;
+        }
+    }
+
+    private void closeCurrentConnection() {
+        if (mBluetoothRemoteDevice != null) {
+            mBluetoothRemoteDevice = null;
+        }
         if (mConnectThread != null) {
             mConnectThread.cancel();
             mConnectThread = null;
         }
-        if (mBtReceiverRegistered) {
-            mContext.unregisterReceiver(mReceiver);
-            mBtReceiverRegistered = false;
+        if (mConnectedThread != null) {
+            mConnectedThread.cancel();
+            mConnectedThread = null;
         }
     }
 
@@ -118,10 +150,8 @@ public class BluetoothLink implements IControllerOutput {
 
     private class ConnectThread extends Thread {
         private final BluetoothSocket mSocket;
-        private final BluetoothDevice mDevice;
 
         public ConnectThread(BluetoothDevice device) {
-            mDevice = device;
             BluetoothSocket tmp = null;
 
             // Get a BluetoothSocket to connect with the given BluetoothDevice
@@ -262,7 +292,9 @@ public class BluetoothLink implements IControllerOutput {
                 // Get the BluetoothDevice object from the Intent
                 BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
                 Logger.userVisibleMessage("BT Target Device Connected");
-                Logger.apierror("BluetoothLink: Connected 2!");
+                mIsConnected = true;
+                if (mListener != null)
+                    mListener.btConnectionChanged(true);
                 // TODO: robustness
             }
             // called if/when the device is disconnected
@@ -272,11 +304,14 @@ public class BluetoothLink implements IControllerOutput {
                 if (mBluetoothRemoteDevice != null && device != null && device.equals(mBluetoothRemoteDevice)) {
                     // known device
                     Logger.userVisibleMessage("Bluetooth Device Disconnected");
-                    Logger.apierror("BluetoothLink: FIXME!");
+                    mIsConnected = false;
+                    if (mListener != null)
+                        mListener.btConnectionChanged(false);
+                    closeCurrentConnection();
                 } else {
                     // unknown device
-                    Logger.userVisibleMessage("Unknown Bluetooth Device Disconnected");
-                    Logger.apierror("BluetoothLink: Unk FIXME!");
+                    //Logger.userVisibleMessage("Unknown Bluetooth Device Disconnected");
+                    //Logger.apierror("BluetoothLink: Unk FIXME!");
                 }
             }
             else
@@ -285,19 +320,19 @@ public class BluetoothLink implements IControllerOutput {
     };
 
     /**
-     * Controls the motion of the platform
+     * Controls the motion of the ears
      *
-     * @param fwdSpeed forward speed; -1: max back: 0: stop, 1: max forward
-     * @param steerPos wheels direction; -1: all left, 0: center, 1: all right
+     * @param leftEar left ear; -1: max back: 0: stop, 1: max forward
+     * @param rightEar right ear; -1: max back: 0: stop, 1: max forward
      */
-    private void controlMotion(float fwdSpeed, float steerPos) {
-        fwdSpeed = floatSuppress(-0.05f, floatBound(-1f, fwdSpeed, 1f), 0.05f, 0);
-        steerPos = floatSuppress(-0.05f, floatBound(-1f, steerPos, 1f), 0.05f, 0);
+    private void sendEarsMotion(float leftEar, float rightEar) {
+        leftEar = floatSuppress(-0.05f, floatBound(-1f, leftEar, 1f), 0.05f, 0);
+        rightEar = floatSuppress(-0.05f, floatBound(-1f, rightEar, 1f), 0.05f, 0);
 
-        final int fwdVal = Math.round(fwdSpeed * 100f + 100f);
-        final int steerVal = Math.round(steerPos * 100f + 100f);
+        final int leftVal = Math.round(leftEar * 100f + 100f);
+        final int rightVal = Math.round(rightEar * 100f + 100f);
 
-        sendCommand4((byte)0x01, (byte)0x01, fwdVal, steerVal);
+        sendCommand4((byte)0x02, (byte)0x01, leftVal, rightVal);
     }
 
 
