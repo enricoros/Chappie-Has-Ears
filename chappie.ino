@@ -12,6 +12,7 @@
 // misc constants
 #define LILY_PIN_LED            LED_BUILTIN // D13
 #define LILY_HW_SERIAL_SPEED    57600   // fixed, can't go beyond it (errors)
+#define MASTER_LOOP_DELAY       20
 
 // additional console
 #include <SoftwareSerial.h>
@@ -25,10 +26,11 @@
 
 // Servo(s) pins
 #define SERVO_ENABLE
-#define LILY_PIN_SERVO_GND      9
-#define LILY_PIN_SERVO_L_EAR    10
-#define LILY_PIN_SERVO_R_EAR    11
+#define LILY_PIN_SERVO_L_EAR    11
+#define LILY_PIN_SERVO_R_EAR    12
 
+// the console (can be Software, since the HW serial is busy with bluetooth)
+Stream *sConsole = 0;
 
 
 static void initOutput(int pin, int level) {
@@ -95,7 +97,7 @@ public:
             initNormal();
     }
 
-    int readChars() {
+    /*int readChars() {
         int hasChars = m_btSerial->available();
         if (!hasChars)
             return 0;
@@ -106,9 +108,15 @@ public:
         }
         CONSOLE->println(">");
         return hasChars;
-    }
+    }*/
 
-    bool unused_readPacket5(byte *destBuffer, int maxLength) {
+    /**
+     * @brief readPacket Decodes an incoming instruction packet transmission. Enrico's standard.
+     * @param destBuffer a pointer to at least maxLength chars
+     * @param maxLength of the destination command (the src packet has 1 sync byte too)
+     * @return true if one or more packets have been decoded (just the last is kept though)
+     */
+    bool readPacket(byte *destBuffer, int maxLength) {
         // we need maxLength + 1 sync byte
         while (m_btSerial->available() >= (maxLength + 1)) {
             // validate the sync byte
@@ -243,79 +251,129 @@ BlueLink *sBlueLink = 0;
 
 #ifdef SERVO_ENABLE
 #include <Servo.h>
+#define SMOOTH_SERVO_MAX_SPEED  16  // max steps per loop
+#define SMOOTH_SERVO_ACCEL      2   // max dSteps per loop
+#define SMOOTH_DECEL_RANGE      ((SMOOTH_SERVO_MAX_SPEED + SMOOTH_SERVO_ACCEL) * (SMOOTH_SERVO_MAX_SPEED / SMOOTH_SERVO_ACCEL) / 2))
 /**
  * This class encapsulates the motor control of Chappie
  */
 class ChappieEars
 {
-    Servo m_sLeftEar;
-    Servo m_sRightEar;
-    float m_pLeftEar;
-    float m_pRightEar;
-    float m_multiplier;
-    int normalToServo(float n) const {
-        const int s = round(n * 90.0f);
-        if (s <= -90)
-            return 0;
-        if (s >= 90)
-            return 180;
-        return s + 90;
-    }
 public:
     ChappieEars()
-        : m_pLeftEar(0)
-        , m_pRightEar(0)
-        , m_multiplier(1.0)
+        /*: m_multiplier(1.0)*/
     {
     }
 
     /// Connect to the hardware pins. Call once
-    void init(int pin_leftEar, int pin_rightEar, int pin_gnd) {
-        // set the ground pin to LOW
-        initOutput(pin_gnd, LOW);
-
-        // attach
-        m_sLeftEar.attach(pin_leftEar);
-        m_sRightEar.attach(pin_rightEar);
-
-        // write initial values
-        setLeftEar(m_pLeftEar);
-        setRightEar(m_pRightEar);
+    void init(int pin_leftEar, int pin_rightEar) {
+        m_LeftEar.attachToPin(pin_leftEar);
+        m_RightEar.attachToPin(pin_rightEar);
     }
 
-    /* limits (active when setting the next setpoint) */
+    // individual controls (all between -1 ... 1)
+#define SETTERS(setter, getter, control) \
+    void setter (float np /* -1 ... 1 */) { control.setTargetNp(/*(m_multiplier != 1.0) ? (np * m_multiplier) :*/ np); } \
+    float getter () { return control.setNp; }
+    SETTERS(setLeftEar, getLeftEar, m_LeftEar)
+    SETTERS(setRightEar, getRightEar, m_RightEar)
 
-    void setMultiplier(float m) { m_multiplier = constrain(m, 0.01, 2.0); }
-    float getMultiplier() const { return m_multiplier; }
+    // limits (active when setting the next setpoint)
+    //void setMultiplier(float m) { m_multiplier = constrain(m, 0.01, 2.0); }
+    //float getMultiplier() const { return m_multiplier; }
 
-    /* set points (all between -1 ... 1) */
+#ifdef SMOOTH_SERVO_MAX_SPEED
+    // loop to gradually reach the target
+    void loop() {
+        if (m_LeftEar.inMotion)
+            m_LeftEar.reachTarget();
+        if (m_RightEar.inMotion)
+            m_RightEar.reachTarget();
+    }
+#endif
 
-    void setLeftEar(float np) {
-        if (np != m_pLeftEar) {
-            m_pLeftEar = np;
-            if (m_multiplier != 1.0)
-                np *= m_multiplier;
-            m_sLeftEar.write(normalToServo(-np));
+private:
+    struct Control {
+        Servo servo;
+        float setNp;
+        int targetPos;
+
+        int currentPos;
+        int currentSpeed;
+
+        bool inMotion;
+
+        Control() : setNp(0), targetPos(90), currentPos(90), currentSpeed(0), inMotion(false) {}
+
+        void attachToPin(int pin) {
+            servo.attach(pin);
+            apply(targetPos);
         }
-    }
-    float getLeftEar() const { return m_pLeftEar; }
 
-    void setRightEar(float np) {
-        if (np != m_pRightEar) {
-            m_pRightEar = np;
-            if (m_multiplier != 1.0)
-                np *= m_multiplier;
-            m_sRightEar.write(normalToServo(np));
+        void setTargetNp(float np) {
+            if (np == setNp)
+                return;
+            setNp = np;
+            targetPos = round(np * 90.0f) + 90;
+            if (targetPos < 0)
+                targetPos = 0;
+            else if (targetPos > 180)
+                targetPos = 180;
+            if (targetPos != currentPos) { // >= (currentPos + TOLERANCE_GAP) || targetPos <= (currentPos - TOLERANCE_GAP)) {
+#ifdef SMOOTH_SERVO_MAX_SPEED
+                inMotion = true;
+#else
+                apply(targetPos);
+#endif
+            }
         }
-    }
-    float getRightEar() const { return m_pRightEar; }
+
+#ifdef SMOOTH_SERVO_MAX_SPEED
+        void reachTarget() {
+            int dPos = targetPos - currentPos;
+            if (dPos > 0) {
+                // adapt speed (and keep it in the 1 .. MAX_SPEED range)
+                int tSpeedP = 4 * sqrt(dPos); // note, the multiplier should be dependent on the SMOOTH_ constants
+                if (tSpeedP > currentSpeed) {
+                    currentSpeed += min(tSpeedP - currentSpeed, SMOOTH_SERVO_ACCEL);
+                    if (currentSpeed > SMOOTH_SERVO_MAX_SPEED)
+                        currentSpeed = SMOOTH_SERVO_MAX_SPEED;
+                } else if (tSpeedP < currentSpeed)
+                    currentSpeed -= min(currentSpeed - tSpeedP, SMOOTH_SERVO_ACCEL);
+
+                // change position
+                apply(currentPos + min(dPos, currentSpeed));
+            } else if (dPos < 0) {
+                // adapt speed (and keep it in the -MAX_SPEED .. -1 range)
+                int tSpeedN = -4 * sqrt(-dPos); // note, the multiplier should be dependent on the SMOOTH_ constants
+                if (tSpeedN < currentSpeed) {
+                    currentSpeed -= min(currentSpeed - tSpeedN, SMOOTH_SERVO_ACCEL);
+                    if (currentSpeed < -SMOOTH_SERVO_MAX_SPEED)
+                        currentSpeed = -SMOOTH_SERVO_MAX_SPEED;
+                } else if (tSpeedN > currentSpeed)
+                    currentSpeed += min(tSpeedN - currentSpeed, SMOOTH_SERVO_ACCEL);
+
+                // change position
+                apply(currentPos + max(dPos, currentSpeed));
+            }
+            sConsole->println(currentSpeed);
+
+            if (currentPos == targetPos) {
+                currentSpeed = 0;
+                inMotion = false;
+            }
+        }
+#endif
+
+        void apply(int pos) {
+            servo.write(pos);
+            currentPos = pos;
+        }
+    } m_LeftEar, m_RightEar;
 };
 ChappieEars *sChappieEars = 0;
 #endif
 
-
-// the software console (since the HW serial is busy with bluetooth)
-Stream *sConsole = 0;
 
 void setup() {
     // high during setup
@@ -342,7 +400,7 @@ void setup() {
 #ifdef SERVO_ENABLE
     sConsole->println(" * init Ears");
     sChappieEars = new ChappieEars();
-    sChappieEars->init(LILY_PIN_SERVO_L_EAR, LILY_PIN_SERVO_R_EAR, LILY_PIN_SERVO_GND);
+    sChappieEars->init(LILY_PIN_SERVO_L_EAR, LILY_PIN_SERVO_R_EAR);
 #endif
 
     // explain...
@@ -350,17 +408,12 @@ void setup() {
     digitalWrite(LILY_PIN_LED, LOW);
 }
 
-enum Command {
-    Cmd_None    = 0,
-    Cmd_Up      = 1,
-    Cmd_Down    = 2,
-    Cmd_Mid     = 3,
-    Cmd_Left    = 4,
-    Cmd_Right   = 5
-};
+#define COMMAND_PACKET_SIZE 4
+byte sCommandBuffer[COMMAND_PACKET_SIZE];
+bool executeCommandPacket(const byte *command);
 
 #ifdef DEBUG_SWCONSOLE_2_SERVOS
-int readConsoleCommand(Stream *console) {
+bool readConsoleCommand(Stream *console) {
     while (console->available()) {
         char c = (char)console->read();
 
@@ -371,74 +424,92 @@ int readConsoleCommand(Stream *console) {
 
         switch (c) {
         case 'u': case 'U':
-            return Cmd_Up;
+            sCommandBuffer[0] = 2; sCommandBuffer[2] = 200; sCommandBuffer[3] = 200; return true;
         case 'm': case 'M':
-            return Cmd_Mid;
+            sCommandBuffer[0] = 2; sCommandBuffer[2] = 100; sCommandBuffer[3] = 100; return true;
         case 'd': case 'D':
-            return Cmd_Down;
+            sCommandBuffer[0] = 2; sCommandBuffer[2] = 0; sCommandBuffer[3] = 0; return true;
         case 'l': case 'L':
-            return Cmd_Left;
+            sCommandBuffer[0] = 2; sCommandBuffer[2] = 200; sCommandBuffer[3] = 50; return true;
         case 'r': case 'R':
-            return Cmd_Right;
+            sCommandBuffer[0] = 2; sCommandBuffer[2] = 50; sCommandBuffer[3] = 200; return true;
         }
+
     }
-    return Cmd_None;
+    return false;
 }
 #endif
 
 
 void loop() {
+    // vital fast loops
+#ifdef SMOOTH_SERVO_MAX_SPEED
+    sChappieEars->loop();
+#endif
 
+    // debugging console<->bt passthrough
 #ifdef DEBUG_SWCONSOLE_2_BT_PASSTHROUGH
     crossStreams(&Serial, sConsole);
     return;
 #endif
 
-    Command command = Cmd_None;
-
-#ifdef DEBUG_SWCONSOLE_2_SERVOS
-    command = (Command)readConsoleCommand(sConsole);
-#endif
+    // [DEMO] mode (enabled with jumper)
+/*    if (sDemoMode->getEnabled()) {
+        bool skipRest = sDemoMode->run();
+        if (skipRest)
+            return;
+    }*/
 
     // check the BT serial for new commands
-    if (sBlueLink) {
-        //sBlueLink->unused_readPacket5();
-        sBlueLink->readChars();
-    }
+    bool hasNewCommand = false;
+    if (sBlueLink->readPacket(sCommandBuffer, COMMAND_PACKET_SIZE))
+        hasNewCommand = true;
 
-    if (command == Cmd_None)
-        return;
-
-    sConsole->print("Chappie Command ");
-    sConsole->println((int)command);
-
-#ifdef SERVO_ENABLE
-    switch (command) {
-    case Cmd_Up:
-        sChappieEars->setLeftEar(1);
-        sChappieEars->setRightEar(1);
-        break;
-    case Cmd_Down:
-        sChappieEars->setLeftEar(-1);
-        sChappieEars->setRightEar(-1);
-        break;
-    case Cmd_Mid:
-        sChappieEars->setLeftEar(0);
-        sChappieEars->setRightEar(0);
-        break;
-    case Cmd_Left:
-        sChappieEars->setLeftEar(1);
-        sChappieEars->setRightEar(-0.5);
-        break;
-    case Cmd_Right:
-        sChappieEars->setLeftEar(-0.5);
-        sChappieEars->setRightEar(1);
-        break;
-    }
+#ifdef DEBUG_SWCONSOLE_2_SERVOS
+    // check the console serial for new commands
+    if (!hasNewCommand)
+        hasNewCommand = readConsoleCommand(sConsole);
 #endif
 
-    digitalWrite(LILY_PIN_LED, HIGH);
-    delay(300);
-    digitalWrite(LILY_PIN_LED, LOW);
+    // execute a command, when received (and blink the LED)
+    if (hasNewCommand) {
+        bool ok = executeCommandPacket(sCommandBuffer);
+        if (!ok && sConsole)
+            sConsole->println("e02");
+        digitalWrite(LILY_PIN_LED, HIGH);
+    }
+
+    // upper limit
+    delay(MASTER_LOOP_DELAY);
+
+    // save energy, stop the LED now
+    if (hasNewCommand)
+        digitalWrite(LILY_PIN_LED, LOW);
 }
 
+bool executeCommandPacket(const byte *msg) {
+    const byte rCmd    = msg[0];
+    //const byte rTarget = msg[1];
+    const byte rValue1 = msg[2];
+    const byte rValue2 = msg[3];
+
+    switch (rCmd) {
+    // C: 02 -> set ears pairs (target ignored)
+    case 0x02: {
+        //if (sConsole) sConsole->println("Chappie Ears Command");
+        float nLeft = ((float)rValue1 - 100.0f) / 100.0f;
+        float nRight = ((float)rValue2 - 100.0f) / 100.0f;
+        sChappieEars->setLeftEar(nLeft);
+        sChappieEars->setRightEar(nRight);
+        } return true;
+
+    // C: 04, T: 01 -> toggle laser/light on/off
+    /*case 0x04: {
+        if (rTarget == 0x01)
+            digitalWrite(PIN_EL_ENABLE, rValue1 == 1 ? HIGH : LOW);
+        } return true;*/
+    }
+
+    // no command
+    return false;
+}
