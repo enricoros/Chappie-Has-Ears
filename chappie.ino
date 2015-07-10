@@ -90,7 +90,7 @@ public:
 
     void init() const {
         pinMode(LILY_PIN_BT_RECONFIG, INPUT_PULLUP);
-        delay(50);
+        delay(100);
 
         // check if the user requested to reconfigure
         if (digitalRead(LILY_PIN_BT_RECONFIG) == LOW)
@@ -204,6 +204,10 @@ private:
         if (!writeAndConfirm("SU,57.6\n", "AOK\r\n", 5, 1000))
             return false;
 
+        // set the GPIO2 to Input, to not have the leds, which save power (restore with S%,0404)
+        if (!writeAndConfirm("S%,0400\n", "AOK\r\n", 5, 1000))
+            return false;
+
         // go back to data mode
         if (!writeAndConfirm("---\n", "END\r\n", 5, 1000))
             return false;
@@ -268,11 +272,11 @@ public:
     }
 
     // individual controls (all between -1 ... 1)
-#define SETTERS(setter, getter, control) \
-    void setter (float np /* -1 ... 1 */) { control.setTargetNp(/*(m_multiplier != 1.0) ? (np * m_multiplier) :*/ np); } \
+#define SETTERS(setter, getter, control, modifier) \
+    void setter (float np /* -1 ... 1 */) { control.setTargetNp(/*(m_multiplier != 1.0) ? (np * m_multiplier) :*/ modifier np); } \
     float getter () { return control.setNp; }
-    SETTERS(setLeftEar, getLeftEar, m_LeftEar)
-    SETTERS(setRightEar, getRightEar, m_RightEar)
+    SETTERS(setLeftEar, getLeftEar, m_LeftEar, -)
+    SETTERS(setRightEar, getRightEar, m_RightEar,)
 
 #ifdef EARS_MAX_SPEED
     // loop to move smoothly
@@ -413,9 +417,9 @@ bool readConsoleCommand(Stream *console) {
         char c = (char)console->read();
 
         // empty buffer
-        delay(100);
-        while (console->available())
-            console->read();
+        //delay(100);
+        //while (console->available())
+        //    console->read();
 
         switch (c) {
         case 'u': case 'U':
