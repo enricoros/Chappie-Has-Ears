@@ -28,8 +28,9 @@
 #define EARS_MAGIC_DECEL        2   // magic constant to start decelerating at the right time
 
 // constant operation pins
-#define LILY_PIN_STANDUP_MODE   7   // D7 (pullup)
-#define LILY_PIN_DEMO_MODE      8   // D8 (pullup)
+#define LILY_PIN_SIT_MODE       7   // D7 (pullup)
+#define LILY_PIN_STANDUP_MODE   8   // D8 (pullup)
+#define LILY_PIN_DEMO_MODE      9   // D9 (pullup)
 
 
 
@@ -41,8 +42,8 @@
 // console types implementation
 #if defined(CONSOLE_PRESENT)
 Stream * _Console = 0;
-#define CONSOLE_ADD(...)    _Console->print(__VA_ARGS__)
-#define CONSOLE_LINE(...)   _Console->println(__VA_ARGS__)
+#define CONSOLE_ADD(...)        _Console->print(__VA_ARGS__)
+#define CONSOLE_LINE(...)       _Console->println(__VA_ARGS__)
 #if defined(CONSOLE_SOFTWARE)
 #include <SoftwareSerial.h>
 void initConsole() {
@@ -456,6 +457,14 @@ byte sCommandBuffer[4];
 bool readSimpleCommand(Stream *stream);
 bool executeCommandPacket(const byte *command);
 
+void setupAndExplainPullup(int pin, const char * text) {
+    pinMode(pin, INPUT_PULLUP);
+    CONSOLE_ADD("   * pin ");
+    CONSOLE_ADD(pin);
+    CONSOLE_ADD(", ");
+    CONSOLE_LINE(text);
+}
+
 
 void setup() {
     initOutput(LILY_PIN_LED, HIGH);
@@ -466,9 +475,10 @@ void setup() {
 
     // i/os
     CONSOLE_LINE(" * init I/O");
-    pinMode(LILY_PIN_BT_RECONFIG, INPUT_PULLUP);
-    pinMode(LILY_PIN_STANDUP_MODE, INPUT_PULLUP);
-    pinMode(LILY_PIN_DEMO_MODE, INPUT_PULLUP);
+    setupAndExplainPullup(LILY_PIN_BT_RECONFIG, "BT reconfigure (boot)");
+    setupAndExplainPullup(LILY_PIN_SIT_MODE, "SIT mode");
+    setupAndExplainPullup(LILY_PIN_STANDUP_MODE, "StandUp mode");
+    setupAndExplainPullup(LILY_PIN_DEMO_MODE, "DEMO mode");
     delay(100);
 
     // init Bluetooth
@@ -496,13 +506,20 @@ void loop() {
     //crossStreams(&Serial, _Console);
     //return;
 
-    if (digitalRead(LILY_PIN_STANDUP_MODE) == LOW) {
+    if (digitalRead(LILY_PIN_SIT_MODE) == LOW) {
+        // [SIT] mode
+        sChappieEars->setLeftEar(-1);
+        sChappieEars->setRightEar(-1);
+    } if (digitalRead(LILY_PIN_STANDUP_MODE) == LOW) {
         // [STANDUP] mode
         sChappieEars->setLeftEar(1);
         sChappieEars->setRightEar(1);
     } else if (sDemoMode->getEnabled()) {
         // [DEMO] mode (enabled with jumper at boot time, or via software)
         sDemoMode->run();
+    } else {
+        // Analog Input Mode
+        // TODO ...
     }
 
     // vital motion update
