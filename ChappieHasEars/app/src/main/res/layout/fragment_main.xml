@@ -26,26 +26,68 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="center"
-        android:layout_marginTop="16dp"
+        android:layout_marginTop="8dp"
         android:rating="1" />
 
     <com.enricoros.chappiehasears.XYInputView
         android:id="@+id/tracerView"
-        android:layout_width="320dp"
-        android:layout_height="240dp"
+        android:layout_width="300dp"
+        android:layout_height="220dp"
         android:layout_gravity="center"
-        android:layout_marginTop="16dp"
+        android:layout_marginTop="8dp"
         android:background="#f0722d" />
 
+    <SeekBar
+        android:id="@+id/seekBarLeft"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:max="200" />
+
+    <SeekBar
+        android:id="@+id/seekBarRight"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:max="200" />
+
     <TextView
-        android:id="@+id/textView2"
-        android:layout_width="wrap_content"
+        android:id="@+id/textCool"
+        android:layout_width="fill_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="center"
-        android:layout_marginTop="32dp"
-        android:textStyle="italic"
+        android:layout_marginTop="8dp"
+        android:gravity="center"
+        android:padding="8dp"
         android:text="Don&apos;t laugh, I&apos;m being cool."
-        android:textAppearance="?android:attr/textAppearanceLarge" />
+        android:textAppearance="?android:attr/textAppearanceLarge"
+        android:textColor="#333"
+        android:textStyle="italic" />
+
+    <LinearLayout
+        android:layout_width="fill_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginLeft="48dp"
+        android:layout_marginRight="48dp"
+        android:orientation="horizontal">
+
+        <CheckBox
+            android:id="@+id/checkDemo"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:text="Demo"
+            android:textColor="#333" />
+
+        <CheckBox
+            android:id="@+id/checkOpt1"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:text="Opt"
+            android:textColor="#333" />
+    </LinearLayout>
 
     <EditText
         android:id="@+id/editSerialComm"

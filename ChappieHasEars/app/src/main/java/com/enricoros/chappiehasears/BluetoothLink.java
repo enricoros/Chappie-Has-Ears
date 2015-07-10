@@ -13,10 +13,8 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
-import java.util.logging.Handler;
-import java.util.logging.LogRecord;
 
-public class BluetoothLink implements IControllerOutput {
+public class BluetoothLink {
 
     private final static String BT_SERIAL_BOARD_UUID = "00001101-0000-1000-8000-00805f9b34fb";
 
@@ -37,8 +35,9 @@ public class BluetoothLink implements IControllerOutput {
     private final byte[] mSendBuffer;
 
     private Listener mListener;
+
     interface Listener {
-        void btConnectionChanged(boolean connected);
+        void onBTConnectionChanged(boolean connected);
     }
 
     public BluetoothLink(Context context, String btDeviceName) {
@@ -77,34 +76,55 @@ public class BluetoothLink implements IControllerOutput {
         }
     }
 
-    public void setListener(Listener listener) {
-        mListener = listener;
-        if (mListener != null)
-            mListener.btConnectionChanged(mIsConnected);
-    }
-
     public boolean getIsSupported() {
         return mIsSupported;
     }
 
-    public void writeSerialComm(String content) {
-        sendString(content);
+    public void setListener(Listener listener) {
+        mListener = listener;
+        if (mListener != null)
+            mListener.onBTConnectionChanged(mIsConnected);
     }
 
-    @Override
-    public void setCoordinates(ControllerCoords c) {
-        final float nx = c.channel0;
-        final float ny = c.channel1;
-        final boolean hasCh0 = nx != ControllerCoords.UNDEFINED;
-        final boolean hasCh1 = ny != ControllerCoords.UNDEFINED;
-        if (hasCh0 && hasCh1) {
-            // decompose the motion
-            final float left = -ny * (nx > 0 ? (-nx + 1) : 1);
-            final float right = -ny * (nx < 0 ? (nx + 1) : 1);
-            sendEarsMotion(left, right);
-        }
+
+    /**
+     * @param earIndex 1..N
+     * @param value -1: max mack .. 1: max forward
+     */
+    public void sendEarPosition(int earIndex, float value) {
+        sendCommand4((byte)0x01, (byte)earIndex,
+                marshallNormalizePosition(value), 0);
     }
 
+    /**
+     * Controls the motion of the ears
+     *
+     * @param leftEar left ear; -1: max back: 0: stop, 1: max forward
+     * @param rightEar right ear; -1: max back: 0: stop, 1: max forward
+     */
+    public void sendEarsPosition(float leftEar, float rightEar) {
+        sendCommand4((byte)0x02, (byte)0x01,
+                marshallNormalizePosition(leftEar),
+                marshallNormalizePosition(rightEar));
+    }
+
+    /**
+     * Sets an application dependent flag (not that the rest is not app dependent...)
+     */
+    public void sendFlag(int index, boolean on) {
+        sendCommand4((byte)0x04,(byte)index, (byte)(on ? 1 : 0), 0);
+    }
+
+    /**
+     * @param message The ASCII representation of the message will be sent
+     */
+    public void sendMessage(String message) {
+        sendString(message);
+    }
+
+
+
+    /*** private stuff ahead ***/
 
     public void doResume() {
     }
@@ -133,8 +153,6 @@ public class BluetoothLink implements IControllerOutput {
             mConnectedThread = null;
         }
     }
-
-    /* private stuff ahead */
 
     private void connectToRemoteDevice() {
         if (mBluetoothRemoteDevice == null) {
@@ -294,7 +312,7 @@ public class BluetoothLink implements IControllerOutput {
                 Logger.userVisibleMessage("BT Target Device Connected");
                 mIsConnected = true;
                 if (mListener != null)
-                    mListener.btConnectionChanged(true);
+                    mListener.onBTConnectionChanged(true);
                 // TODO: robustness
             }
             // called if/when the device is disconnected
@@ -306,7 +324,7 @@ public class BluetoothLink implements IControllerOutput {
                     Logger.userVisibleMessage("Bluetooth Device Disconnected");
                     mIsConnected = false;
                     if (mListener != null)
-                        mListener.btConnectionChanged(false);
+                        mListener.onBTConnectionChanged(false);
                     closeCurrentConnection();
                 } else {
                     // unknown device
@@ -319,51 +337,8 @@ public class BluetoothLink implements IControllerOutput {
         }
     };
 
-    /**
-     * Controls the motion of the ears
-     *
-     * @param leftEar left ear; -1: max back: 0: stop, 1: max forward
-     * @param rightEar right ear; -1: max back: 0: stop, 1: max forward
-     */
-    private void sendEarsMotion(float leftEar, float rightEar) {
-        leftEar = floatSuppress(-0.05f, floatBound(-1f, leftEar, 1f), 0.05f, 0);
-        rightEar = floatSuppress(-0.05f, floatBound(-1f, rightEar, 1f), 0.05f, 0);
 
-        final int leftVal = Math.round(leftEar * 100f + 100f);
-        final int rightVal = Math.round(rightEar * 100f + 100f);
-
-        sendCommand4((byte)0x02, (byte)0x01, leftVal, rightVal);
-    }
-
-
-    /* Private stuff ahead */
-
-    private float floatBound(float min, float val, float max) {
-        if (val > max)
-            return max;
-        if (val < min)
-            return min;
-        return val;
-    }
-
-    private float floatSuppress(float from, float val, float to, float dest) {
-        if (val > from && val < to)
-            return dest;
-        return val;
-    }
-
-    /*private boolean sendCommand3(byte command, byte target, int value) {
-        return sendCommand4(command, target, value, 0);
-    }*/
-
-    private boolean sendString(String string) {
-        if (mConnectedThread != null) {
-            byte[] b = string.getBytes(StandardCharsets.US_ASCII);
-            mConnectedThread.write(b, 0, b.length);
-            return true;
-        }
-        return false;
-    }
+    /*** Private stuff ahead, our Communication encoding/marshalling mechanism ***/
 
     private boolean sendCommand4(byte command, byte target, int value1, int value2) {
         if (value1 > 255)
@@ -382,6 +357,34 @@ public class BluetoothLink implements IControllerOutput {
             return true;
         }
         return false;
+    }
+
+    private boolean sendString(String string) {
+        if (mConnectedThread != null) {
+            byte[] b = string.getBytes(StandardCharsets.US_ASCII);
+            mConnectedThread.write(b, 0, b.length);
+            return true;
+        }
+        return false;
+    }
+
+    private int marshallNormalizePosition(float np) {
+        np = floatSuppress(-0.05f, floatBound(-1f, np, 1f), 0.05f, 0);
+        return Math.round(np * 100f + 100f);
+    }
+
+    private float floatBound(float min, float val, float max) {
+        if (val > max)
+            return max;
+        if (val < min)
+            return min;
+        return val;
+    }
+
+    private float floatSuppress(float from, float val, float to, float dest) {
+        if (val > from && val < to)
+            return dest;
+        return val;
     }
 
 }
