@@ -12,7 +12,7 @@
 // misc constants
 #define LILY_PIN_LED            LED_BUILTIN // D13
 #define LILY_HW_SERIAL_SPEED    57600   // fixed, can't go beyond it (errors)
-#define MASTER_LOOP_DELAY       20
+#define MASTER_LOOP_DELAY       19
 
 // additional console
 #include <SoftwareSerial.h>
@@ -28,7 +28,9 @@
 #define SERVO_ENABLE
 #define LILY_PIN_SERVO_L_EAR    11
 #define LILY_PIN_SERVO_R_EAR    12
-
+#define EARS_MAX_SPEED          16  // max steps per loop
+#define EARS_MAX_ACCEL          2   // max dSteps per loop
+#define EARS_MAGIC_DECEL        2   // magic constant to start decelerating at the right time
 // the console (can be Software, since the HW serial is busy with bluetooth)
 Stream *sConsole = 0;
 
@@ -251,19 +253,13 @@ BlueLink *sBlueLink = 0;
 
 #ifdef SERVO_ENABLE
 #include <Servo.h>
-#define SMOOTH_SERVO_MAX_SPEED  16  // max steps per loop
-#define SMOOTH_SERVO_ACCEL      2   // max dSteps per loop
-#define SMOOTH_DECEL_RANGE      ((SMOOTH_SERVO_MAX_SPEED + SMOOTH_SERVO_ACCEL) * (SMOOTH_SERVO_MAX_SPEED / SMOOTH_SERVO_ACCEL) / 2))
 /**
  * This class encapsulates the motor control of Chappie
  */
 class ChappieEars
 {
 public:
-    ChappieEars()
-        /*: m_multiplier(1.0)*/
-    {
-    }
+    ChappieEars() /*: m_multiplier(1.0f)*/ {}
 
     /// Connect to the hardware pins. Call once
     void init(int pin_leftEar, int pin_rightEar) {
@@ -278,12 +274,8 @@ public:
     SETTERS(setLeftEar, getLeftEar, m_LeftEar)
     SETTERS(setRightEar, getRightEar, m_RightEar)
 
-    // limits (active when setting the next setpoint)
-    //void setMultiplier(float m) { m_multiplier = constrain(m, 0.01, 2.0); }
-    //float getMultiplier() const { return m_multiplier; }
-
-#ifdef SMOOTH_SERVO_MAX_SPEED
-    // loop to gradually reach the target
+#ifdef EARS_MAX_SPEED
+    // loop to move smoothly
     void loop() {
         if (m_LeftEar.inMotion)
             m_LeftEar.reachTarget();
@@ -291,6 +283,10 @@ public:
             m_RightEar.reachTarget();
     }
 #endif
+
+    // limits (active when setting the next setpoint)
+    //void setMultiplier(float m) { m_multiplier = constrain(m, 0.01, 2.0); }
+    //float getMultiplier() const { return m_multiplier; }
 
 private:
     struct Control {
@@ -319,8 +315,8 @@ private:
                 targetPos = 0;
             else if (targetPos > 180)
                 targetPos = 180;
-            if (targetPos != currentPos) { // >= (currentPos + TOLERANCE_GAP) || targetPos <= (currentPos - TOLERANCE_GAP)) {
-#ifdef SMOOTH_SERVO_MAX_SPEED
+            if (targetPos != currentPos) {
+#ifdef EARS_MAX_SPEED
                 inMotion = true;
 #else
                 apply(targetPos);
@@ -328,36 +324,35 @@ private:
             }
         }
 
-#ifdef SMOOTH_SERVO_MAX_SPEED
+#ifdef EARS_MAX_SPEED
         void reachTarget() {
+            // use a limited Velocity and Acceleration algorithm
             int dPos = targetPos - currentPos;
             if (dPos > 0) {
                 // adapt speed (and keep it in the 1 .. MAX_SPEED range)
-                int tSpeedP = 4 * sqrt(dPos); // note, the multiplier should be dependent on the SMOOTH_ constants
+                int tSpeedP = EARS_MAGIC_DECEL * sqrt(dPos); // note, the multiplier should be dependent on the SMOOTH_ constants
                 if (tSpeedP > currentSpeed) {
-                    currentSpeed += min(tSpeedP - currentSpeed, SMOOTH_SERVO_ACCEL);
-                    if (currentSpeed > SMOOTH_SERVO_MAX_SPEED)
-                        currentSpeed = SMOOTH_SERVO_MAX_SPEED;
+                    currentSpeed += min(tSpeedP - currentSpeed, EARS_MAX_ACCEL);
+                    if (currentSpeed > EARS_MAX_SPEED)
+                        currentSpeed = EARS_MAX_SPEED;
                 } else if (tSpeedP < currentSpeed)
-                    currentSpeed -= min(currentSpeed - tSpeedP, SMOOTH_SERVO_ACCEL);
+                    currentSpeed -= min(currentSpeed - tSpeedP, EARS_MAX_ACCEL);
 
                 // change position
                 apply(currentPos + min(dPos, currentSpeed));
             } else if (dPos < 0) {
                 // adapt speed (and keep it in the -MAX_SPEED .. -1 range)
-                int tSpeedN = -4 * sqrt(-dPos); // note, the multiplier should be dependent on the SMOOTH_ constants
+                int tSpeedN = EARS_MAGIC_DECEL * -sqrt(-dPos); // note, the multiplier should be dependent on the SMOOTH_ constants
                 if (tSpeedN < currentSpeed) {
-                    currentSpeed -= min(currentSpeed - tSpeedN, SMOOTH_SERVO_ACCEL);
-                    if (currentSpeed < -SMOOTH_SERVO_MAX_SPEED)
-                        currentSpeed = -SMOOTH_SERVO_MAX_SPEED;
+                    currentSpeed -= min(currentSpeed - tSpeedN, EARS_MAX_ACCEL);
+                    if (currentSpeed < -EARS_MAX_SPEED)
+                        currentSpeed = -EARS_MAX_SPEED;
                 } else if (tSpeedN > currentSpeed)
-                    currentSpeed += min(tSpeedN - currentSpeed, SMOOTH_SERVO_ACCEL);
+                    currentSpeed += min(tSpeedN - currentSpeed, EARS_MAX_ACCEL);
 
                 // change position
                 apply(currentPos + max(dPos, currentSpeed));
             }
-            sConsole->println(currentSpeed);
-
             if (currentPos == targetPos) {
                 currentSpeed = 0;
                 inMotion = false;
@@ -442,8 +437,9 @@ bool readConsoleCommand(Stream *console) {
 
 
 void loop() {
+
     // vital fast loops
-#ifdef SMOOTH_SERVO_MAX_SPEED
+#ifdef EARS_MAX_SPEED
     sChappieEars->loop();
 #endif
 
@@ -479,7 +475,7 @@ void loop() {
         digitalWrite(LILY_PIN_LED, HIGH);
     }
 
-    // upper limit
+    // upper limit to the loop
     delay(MASTER_LOOP_DELAY);
 
     // save energy, stop the LED now
@@ -489,11 +485,19 @@ void loop() {
 
 bool executeCommandPacket(const byte *msg) {
     const byte rCmd    = msg[0];
-    //const byte rTarget = msg[1];
+    const byte rTarget = msg[1];
     const byte rValue1 = msg[2];
     const byte rValue2 = msg[3];
 
     switch (rCmd) {
+    // C: 01 -> set individual ears (target: 1..N, rValue1: angle [0..200])
+    case 0x01:
+        switch (rTarget) {
+        case 1: sChappieEars->setLeftEar(((float)rValue1 - 100.0f) / 100.0f); return true;
+        case 2: sChappieEars->setRightEar(((float)rValue1 - 100.0f) / 100.0f); return true;
+        };
+        break;
+
     // C: 02 -> set ears pairs (target ignored)
     case 0x02: {
         //if (sConsole) sConsole->println("Chappie Ears Command");
