@@ -8,6 +8,13 @@
 // uncomment the following to give commands from the Console: U,D,M,L,R
 #define DEBUG_SWCONSOLE_2_SERVOS
 
+// uncomment the following to enable debugging on errors (disable for prod!)
+//#define DEBUGGING
+
+
+// the global console (can be Software, since the HW serial is busy with bluetooth)
+Stream *sConsole = 0;
+
 
 // misc constants
 #define LILY_PIN_LED            LED_BUILTIN // D13
@@ -31,8 +38,7 @@
 #define EARS_MAX_SPEED          16  // max steps per loop
 #define EARS_MAX_ACCEL          2   // max dSteps per loop
 #define EARS_MAGIC_DECEL        2   // magic constant to start decelerating at the right time
-// the console (can be Software, since the HW serial is busy with bluetooth)
-Stream *sConsole = 0;
+
 
 
 static void initOutput(int pin, int level) {
@@ -99,19 +105,6 @@ public:
             initNormal();
     }
 
-    /*int readChars() {
-        int hasChars = m_btSerial->available();
-        if (!hasChars)
-            return 0;
-        CONSOLE->print("BT bytes < ");
-        while (m_btSerial->available() >= 1) {
-            CONSOLE->print((byte)m_btSerial->read());
-            CONSOLE->print(" ");
-        }
-        CONSOLE->println(">");
-        return hasChars;
-    }*/
-
     /**
      * @brief readPacket Decodes an incoming instruction packet transmission. Enrico's standard.
      * @param destBuffer a pointer to at least maxLength chars
@@ -125,10 +118,12 @@ public:
             byte syncByte = (byte)m_btSerial->read();
             if (syncByte != 0xA5) {
                 // ERROR: we were unsynced
+#ifdef DEBUGGING
                 if (m_console) {
                     m_console->print("e21: ");
                     m_console->println((int)syncByte);
                 }
+#endif
                 // try the next
                 continue;
             }
@@ -255,6 +250,8 @@ private:
 BlueLink *sBlueLink = 0;
 #endif
 
+
+
 #ifdef SERVO_ENABLE
 #include <Servo.h>
 /**
@@ -269,11 +266,15 @@ public:
     void init(int pin_leftEar, int pin_rightEar) {
         m_LeftEar.attachToPin(pin_leftEar);
         m_RightEar.attachToPin(pin_rightEar);
+        setLeftEar(1.0, true);
+        setRightEar(1.0, true);
     }
 
     // individual controls (all between -1 ... 1)
 #define SETTERS(setter, getter, control, modifier) \
-    void setter (float np /* -1 ... 1 */) { control.setTargetNp(/*(m_multiplier != 1.0) ? (np * m_multiplier) :*/ modifier np); } \
+    void setter (float np /* -1 ... 1 */, bool instantaneous = false) {\
+        control.setTargetNp(/*(m_multiplier != 1.0) ? (np * m_multiplier) :*/ modifier np, instantaneous); \
+    } \
     float getter () { return control.setNp; }
     SETTERS(setLeftEar, getLeftEar, m_LeftEar, -)
     SETTERS(setRightEar, getRightEar, m_RightEar,)
@@ -307,11 +308,10 @@ private:
 
         void attachToPin(int pin) {
             servo.attach(pin);
-            apply(targetPos);
         }
 
-        void setTargetNp(float np) {
-            if (np == setNp)
+        void setTargetNp(float np, bool force) {
+            if (np == setNp && !force)
                 return;
             setNp = np;
             targetPos = round(np * 90.0f) + 90;
@@ -319,6 +319,13 @@ private:
                 targetPos = 0;
             else if (targetPos > 180)
                 targetPos = 180;
+            if (force) {
+                currentPos = targetPos;
+                currentSpeed = 0;
+                inMotion = false;
+                apply(targetPos);
+                return;
+            }
             if (targetPos != currentPos) {
 #ifdef EARS_MAX_SPEED
                 inMotion = true;
@@ -374,6 +381,7 @@ ChappieEars *sChappieEars = 0;
 #endif
 
 
+
 void setup() {
     // high during setup
     initOutput(LILY_PIN_LED, HIGH);
@@ -407,9 +415,99 @@ void setup() {
     digitalWrite(LILY_PIN_LED, LOW);
 }
 
+
+// runtime globals
+bool sDemoModeEnabled = false;
 #define COMMAND_PACKET_SIZE 4
 byte sCommandBuffer[COMMAND_PACKET_SIZE];
+bool readConsoleCommand(Stream *console);
 bool executeCommandPacket(const byte *command);
+
+
+void loop() {
+
+    // vital fast loops
+#ifdef EARS_MAX_SPEED
+    sChappieEars->loop();
+#endif
+
+    // debugging console<->bt passthrough
+#ifdef DEBUG_SWCONSOLE_2_BT_PASSTHROUGH
+    crossStreams(&Serial, sConsole);
+    return;
+#endif
+
+    // [DEMO] mode (enabled with jumper at boot time)
+    if (sDemoModeEnabled) {
+        /*bool skipRest = sDemoModeEnabled->run();
+        if (skipRest)
+            return;*/
+        //digitalWrite(LILY_PIN_LED, HIGH);
+    }
+
+    // check the BT serial for new commands
+    bool hasNewCommand = false;
+    if (sBlueLink->readPacket(sCommandBuffer, COMMAND_PACKET_SIZE))
+        hasNewCommand = true;
+
+#ifdef DEBUG_SWCONSOLE_2_SERVOS
+    // check the console serial for new commands
+    if (!hasNewCommand)
+        hasNewCommand = readConsoleCommand(sConsole);
+#endif
+
+    // execute a command, when received (and blink the LED)
+    if (hasNewCommand) {
+        bool ok = executeCommandPacket(sCommandBuffer);
+#ifdef DEBUGGING
+        if (!ok && sConsole)
+            sConsole->println("e02");
+#endif
+        digitalWrite(LILY_PIN_LED, HIGH);
+    }
+
+    // upper limit to the loop
+    delay(MASTER_LOOP_DELAY);
+
+    // save energy, stop the LED now
+    if (hasNewCommand)
+        digitalWrite(LILY_PIN_LED, LOW);
+}
+
+
+
+bool executeCommandPacket(const byte *msg) {
+    const byte rCmd    = msg[0];
+    const byte rTarget = msg[1];
+    const byte rValue1 = msg[2];
+    const byte rValue2 = msg[3];
+
+    switch (rCmd) {
+    // C: 01 -> set individual ears (target: 1..N, rValue1: angle [0..200])
+    case 0x01:
+        switch (rTarget) {
+        case 1: sChappieEars->setLeftEar(((float)rValue1 - 100.0f) / 100.0f); return true;
+        case 2: sChappieEars->setRightEar(((float)rValue1 - 100.0f) / 100.0f); return true;
+        }; break;
+
+    // C: 02 -> set ears pairs (target ignored)
+    case 0x02: {
+        float nLeft = ((float)rValue1 - 100.0f) / 100.0f;
+        float nRight = ((float)rValue2 - 100.0f) / 100.0f;
+        sChappieEars->setLeftEar(nLeft);
+        sChappieEars->setRightEar(nRight);
+        } return true;
+
+    // C: 04 -> set flag (target: flag index) (flag specific behavior)
+    case 0x04:
+        switch (rTarget) {
+        case 1: sDemoModeEnabled = rValue1 != 0; return true;
+        }; break;
+    }
+
+    // no/bad command
+    return false;
+}
 
 #ifdef DEBUG_SWCONSOLE_2_SERVOS
 bool readConsoleCommand(Stream *console) {
@@ -438,86 +536,3 @@ bool readConsoleCommand(Stream *console) {
     return false;
 }
 #endif
-
-
-void loop() {
-
-    // vital fast loops
-#ifdef EARS_MAX_SPEED
-    sChappieEars->loop();
-#endif
-
-    // debugging console<->bt passthrough
-#ifdef DEBUG_SWCONSOLE_2_BT_PASSTHROUGH
-    crossStreams(&Serial, sConsole);
-    return;
-#endif
-
-    // [DEMO] mode (enabled with jumper)
-/*    if (sDemoMode->getEnabled()) {
-        bool skipRest = sDemoMode->run();
-        if (skipRest)
-            return;
-    }*/
-
-    // check the BT serial for new commands
-    bool hasNewCommand = false;
-    if (sBlueLink->readPacket(sCommandBuffer, COMMAND_PACKET_SIZE))
-        hasNewCommand = true;
-
-#ifdef DEBUG_SWCONSOLE_2_SERVOS
-    // check the console serial for new commands
-    if (!hasNewCommand)
-        hasNewCommand = readConsoleCommand(sConsole);
-#endif
-
-    // execute a command, when received (and blink the LED)
-    if (hasNewCommand) {
-        bool ok = executeCommandPacket(sCommandBuffer);
-        if (!ok && sConsole)
-            sConsole->println("e02");
-        digitalWrite(LILY_PIN_LED, HIGH);
-    }
-
-    // upper limit to the loop
-    delay(MASTER_LOOP_DELAY);
-
-    // save energy, stop the LED now
-    if (hasNewCommand)
-        digitalWrite(LILY_PIN_LED, LOW);
-}
-
-bool executeCommandPacket(const byte *msg) {
-    const byte rCmd    = msg[0];
-    const byte rTarget = msg[1];
-    const byte rValue1 = msg[2];
-    const byte rValue2 = msg[3];
-
-    switch (rCmd) {
-    // C: 01 -> set individual ears (target: 1..N, rValue1: angle [0..200])
-    case 0x01:
-        switch (rTarget) {
-        case 1: sChappieEars->setLeftEar(((float)rValue1 - 100.0f) / 100.0f); return true;
-        case 2: sChappieEars->setRightEar(((float)rValue1 - 100.0f) / 100.0f); return true;
-        };
-        break;
-
-    // C: 02 -> set ears pairs (target ignored)
-    case 0x02: {
-        //if (sConsole) sConsole->println("Chappie Ears Command");
-        float nLeft = ((float)rValue1 - 100.0f) / 100.0f;
-        float nRight = ((float)rValue2 - 100.0f) / 100.0f;
-        sChappieEars->setLeftEar(nLeft);
-        sChappieEars->setRightEar(nRight);
-        } return true;
-
-    // C: 04, T: 01 -> toggle laser/light on/off
-    /*case 0x04: {
-        if (rTarget == 0x01)
-            digitalWrite(PIN_EL_ENABLE, rValue1 == 1 ? HIGH : LOW);
-        } return true;*/
-    }
-
-    // no command
-    return false;
-}
