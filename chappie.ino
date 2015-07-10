@@ -3,17 +3,13 @@
 #include <Arduino.h>
 
 // uncomment the following for talking directly to the BT module (after initialization)
-//#define DEBUG_SWCONSOLE_2_BT_PASSTHROUGH
+//#define DEBUG_CONSOLE_2_BT_PASSTHROUGH
 
 // uncomment the following to give commands from the Console: U,D,M,L,R
-#define DEBUG_SWCONSOLE_2_SERVOS
+#define DEBUG_CONSOLE_2_SERVOS
 
 // uncomment the following to enable debugging on errors (disable for prod!)
 //#define DEBUGGING
-
-
-// the global console (can be Software, since the HW serial is busy with bluetooth)
-Stream *sConsole = 0;
 
 
 // misc constants
@@ -22,23 +18,51 @@ Stream *sConsole = 0;
 #define MASTER_LOOP_DELAY       19
 
 // additional console
-#include <SoftwareSerial.h>
 #define LILY_SW_CONSOLE_SPEED   57600
 #define LILY_PIN_SW_CONSOLE_RX  2  // D2
 #define LILY_PIN_SW_CONSOLE_TX  3  // D3
 
 // BT pins
-#define BT_ENABLE
 #define LILY_PIN_BT_RECONFIG    4 // set to GND to reconfig
 
-// Servo(s) pins
-#define SERVO_ENABLE
+// Servo(s) pins and params
 #define LILY_PIN_SERVO_L_EAR    11
 #define LILY_PIN_SERVO_R_EAR    12
 #define EARS_MAX_SPEED          16  // max steps per loop
 #define EARS_MAX_ACCEL          2   // max dSteps per loop
 #define EARS_MAGIC_DECEL        2   // magic constant to start decelerating at the right time
 
+
+// the global console: can be null, can be Software (since the HW serial is busy with bluetooth)
+#define CONSOLE_PRESENT
+#define CONSOLE_SOFTWARE
+
+// console types implementation
+#if defined(CONSOLE_PRESENT)
+Stream * _Console = 0;
+#define CONSOLE_ADD(...)    _Console->print(__VA_ARGS__)
+#define CONSOLE_LINE(...)   _Console->println(__VA_ARGS__)
+#if defined(CONSOLE_SOFTWARE)
+#include <SoftwareSerial.h>
+void initConsole() {
+    SoftwareSerial *swConsole = new SoftwareSerial(LILY_PIN_SW_CONSOLE_RX, LILY_PIN_SW_CONSOLE_TX);
+    swConsole->begin(LILY_SW_CONSOLE_SPEED);
+    _Console = swConsole;
+}
+#else
+void initConsole() {
+    Serial.begin(LILY_HW_SERIAL_SPEED);
+    _Console = &Serial;
+}
+#endif
+#else
+#undef CONSOLE_SOFTWARE
+#undef DEBUG_CONSOLE_2_BT_PASSTHROUGH
+#undef DEBUG_CONSOLE_2_SERVOS
+#define CONSOLE_ADD(...)
+#define CONSOLE_LINE(...)
+void initConsole() {}
+#endif
 
 
 static void initOutput(int pin, int level) {
@@ -71,9 +95,8 @@ void crossStreams(Stream *s1, Stream *s2) {
 
 
 
-#ifdef BT_ENABLE
 /**
- * @brief The BlueLink class communicates via a Blueetooth serial.
+ * @brief The BlueLink class communicates via a Blueetooth dongle
  *
  * This class can also activate passthrough mode (for AT commands, for example)
  * to another serial (e.g. serial 0).
@@ -84,13 +107,9 @@ void crossStreams(Stream *s1, Stream *s2) {
  */
 class BlueLink {
     HardwareSerial *m_btSerial;
-    Stream *m_console;
-#define SAFE(x) if (x) x
-#define CONSOLE SAFE(m_console)
 public:
-    BlueLink(HardwareSerial *btSerial, Stream *console = 0)
+    BlueLink(HardwareSerial *btSerial)
         : m_btSerial(btSerial)
-        , m_console(console)
     {
     }
 
@@ -118,12 +137,8 @@ public:
             byte syncByte = (byte)m_btSerial->read();
             if (syncByte != 0xA5) {
                 // ERROR: we were unsynced
-#ifdef DEBUGGING
-                if (m_console) {
-                    m_console->print("e21: ");
-                    m_console->println((int)syncByte);
-                }
-#endif
+                CONSOLE_ADD("e21: ");
+                CONSOLE_LINE((int)syncByte);
                 // try the next
                 continue;
             }
@@ -143,22 +158,22 @@ public:
 
 private:
     void initNormal() const {
-        CONSOLE->print("   * open BT... ");
+        CONSOLE_ADD("   * open BT... ");
         m_btSerial->begin(LILY_HW_SERIAL_SPEED, SERIAL_8N1);
         delay(100);
-        CONSOLE->println("done.");
+        CONSOLE_LINE("done.");
     }
 
     /* Reconf Manually with:
      *  $$$ SF,1\n SN,Chappie-Ears\n SP,1337\n ST,0\n SU,57.6\n ---\n
      */
     bool initReconfigure() const {
-        CONSOLE->println("   * reconfiguraton requested ");
+        CONSOLE_LINE("   * reconfiguraton requested ");
 
         // jump up to the modem speed and move it down temporarily to 57600
         if (true /*lowerBtSpeed*/) {
             // start with the modem speed
-            CONSOLE->print("   * lowering BT modem speed to 57600.. ");
+            CONSOLE_ADD("   * lowering BT modem speed to 57600.. ");
             m_btSerial->begin(115200);
             delay(100);
             m_btSerial->print("$");
@@ -167,13 +182,13 @@ private:
             delay(100);
             // move the modem to 57600 and in data mode
             m_btSerial->println("U,57.6,N");
-            CONSOLE->println("done");
+            CONSOLE_LINE("done");
         }
 
         // now open at the right speed
         initNormal();
 
-        CONSOLE->print("   * reconfiguring BT... ");
+        CONSOLE_ADD("   * reconfiguring BT... ");
 
         // enter command mode
         if (!writeAndConfirm("$$$", "CMD\r\n", 5, 1000))
@@ -207,16 +222,16 @@ private:
         if (!writeAndConfirm("---\n", "END\r\n", 5, 1000))
             return false;
 
-        CONSOLE->println("done.");
+        CONSOLE_LINE("done.");
         return true;
     }
 
     bool writeAndConfirm(const char *msg, const char *expected, int length, int timeoutMs) const {
         m_btSerial->print(msg);
         bool ok = (expected == 0) || matchReply(expected, length, timeoutMs);
-        if (m_console && !ok) {
-            m_console->print(ok ? "   * BlueLink: wrote: '" : "   * BlueLink: exception writing: '");
-            m_console->println(msg);
+        if (!ok) {
+            CONSOLE_ADD(ok ? "   * BlueLink: wrote: '" : "   * BlueLink: exception writing: '");
+            CONSOLE_LINE(msg);
         }
         return ok;
     }
@@ -227,14 +242,12 @@ private:
             while (m_btSerial->available()) {
                 char c = (char)m_btSerial->read();
                 if (expected[sIdx] != c) {
-                    if (m_console) {
-                        m_console->print("   * BlueLink: expected ");
-                        m_console->print((int)expected[sIdx]);
-                        m_console->print(" gotten ");
-                        m_console->print((int)c);
-                        m_console->print(" at index ");
-                        m_console->println((int)sIdx);
-                    }
+                    CONSOLE_ADD("   * BlueLink: expected ");
+                    CONSOLE_ADD((int)expected[sIdx]);
+                    CONSOLE_ADD(" gotten ");
+                    CONSOLE_ADD((int)c);
+                    CONSOLE_ADD(" at index ");
+                    CONSOLE_LINE((int)sIdx);
                     return false;
                 }
                 sIdx++;
@@ -247,12 +260,9 @@ private:
         return false;
     }
 };
-BlueLink *sBlueLink = 0;
-#endif
 
 
 
-#ifdef SERVO_ENABLE
 #include <Servo.h>
 /**
  * This class encapsulates the motor control of Chappie
@@ -377,63 +387,53 @@ private:
         }
     } m_LeftEar, m_RightEar;
 };
-ChappieEars *sChappieEars = 0;
-#endif
 
+
+
+// runtime globals
+ChappieEars * sChappieEars;
+BlueLink * sBlueLink;
+bool sDemoModeEnabled = false;
+byte sCommandBuffer[4];
+bool readSimpleCommand(Stream *stream);
+bool executeCommandPacket(const byte *command);
 
 
 void setup() {
     // high during setup
     initOutput(LILY_PIN_LED, HIGH);
 
-    // serial console: hw serial vs software serial
-    bool useSwConsole = true;
-    if (useSwConsole) {
-        SoftwareSerial *swConsole = new SoftwareSerial(LILY_PIN_SW_CONSOLE_RX, LILY_PIN_SW_CONSOLE_TX);
-        swConsole->begin(LILY_SW_CONSOLE_SPEED);
-        sConsole = swConsole;
-    } else {
-        Serial.begin(LILY_HW_SERIAL_SPEED);
-        sConsole = &Serial;
-    }
-    sConsole->println("Chappie Booting...");
+    // console
+    initConsole();
+    CONSOLE_LINE("Chappie Booting...");
 
     // init Bluetooth
-    sConsole->println(" * init BT");
-    sBlueLink = new BlueLink(&Serial, sConsole);
+    CONSOLE_LINE(" * init BT");
+    sBlueLink = new BlueLink(&Serial);
     sBlueLink->init();
 
     // init ears
-#ifdef SERVO_ENABLE
-    sConsole->println(" * init Ears");
+    CONSOLE_LINE(" * init Ears");
     sChappieEars = new ChappieEars();
     sChappieEars->init(LILY_PIN_SERVO_L_EAR, LILY_PIN_SERVO_R_EAR);
-#endif
 
     // explain...
-    sConsole->println("Chappie Ready!");
+    CONSOLE_LINE("Chappie Ready!");
     digitalWrite(LILY_PIN_LED, LOW);
 }
 
 
-// runtime globals
-bool sDemoModeEnabled = false;
-#define COMMAND_PACKET_SIZE 4
-byte sCommandBuffer[COMMAND_PACKET_SIZE];
-bool readConsoleCommand(Stream *console);
-bool executeCommandPacket(const byte *command);
 
 
 void loop() {
-
     // vital fast loops
 #ifdef EARS_MAX_SPEED
     sChappieEars->loop();
 #endif
 
     // debugging console<->bt passthrough
-#ifdef DEBUG_SWCONSOLE_2_BT_PASSTHROUGH
-    crossStreams(&Serial, sConsole);
+#ifdef DEBUG_CONSOLE_2_BT_PASSTHROUGH
+    crossStreams(&Serial, _Console);
     return;
 #endif
 
@@ -447,24 +447,19 @@ void loop() {
 
     // check the BT serial for new commands
     bool hasNewCommand = false;
-    if (sBlueLink->readPacket(sCommandBuffer, COMMAND_PACKET_SIZE))
+    if (sBlueLink->readPacket(sCommandBuffer, 4))
         hasNewCommand = true;
 
-#ifdef DEBUG_SWCONSOLE_2_SERVOS
-    // check the console serial for new commands
+#ifdef DEBUG_CONSOLE_2_SERVOS
+    // check the console for new commands
     if (!hasNewCommand)
-        hasNewCommand = readConsoleCommand(sConsole);
+        hasNewCommand = readSimpleCommand(_Console);
 #endif
 
     // execute a command, when received (and blink the LED)
-    if (hasNewCommand) {
-        bool ok = executeCommandPacket(sCommandBuffer);
-#ifdef DEBUGGING
-        if (!ok && sConsole)
-            sConsole->println("e02");
-#endif
-        digitalWrite(LILY_PIN_LED, HIGH);
-    }
+    if (hasNewCommand)
+        if (executeCommandPacket(sCommandBuffer))
+            digitalWrite(LILY_PIN_LED, HIGH);
 
     // upper limit to the loop
     delay(MASTER_LOOP_DELAY);
@@ -506,15 +501,17 @@ bool executeCommandPacket(const byte *msg) {
     }
 
     // no/bad command
+#ifdef DEBUGGING
+    LOG_NL("e02");
+#endif
     return false;
 }
 
-#ifdef DEBUG_SWCONSOLE_2_SERVOS
-bool readConsoleCommand(Stream *console) {
-    while (console->available()) {
-        char c = (char)console->read();
+bool readSimpleCommand(Stream *stream) {
+    while (stream->available()) {
+        char c = (char)stream->read();
 
-        // empty buffer
+        // empty buffer (don't enable in prod! 100ms delays kill)
         //delay(100);
         //while (console->available())
         //    console->read();
@@ -535,4 +532,3 @@ bool readConsoleCommand(Stream *console) {
     }
     return false;
 }
-#endif
