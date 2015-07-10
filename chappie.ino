@@ -28,15 +28,15 @@
 #define EARS_MAGIC_DECEL        2   // magic constant to start decelerating at the right time
 
 // constant operation pins
-#define LILY_PIN_SIT_MODE       7   // D7 (pullup)
-#define LILY_PIN_STANDUP_MODE   8   // D8 (pullup)
-#define LILY_PIN_DEMO_MODE      9   // D9 (pullup)
-
+#define LILY_PIN_MODE_ANALOG    6   // D7 (pullup)
+#define LILY_PIN_MODE_SIT       7   // D7 (pullup)
+#define LILY_PIN_MODE_STANDUP   8   // D8 (pullup)
+#define LILY_PIN_MODE_DEMO      9   // D9 (pullup)
 
 
 
 // the global console: can be null, can be Software (since the HW serial is busy with bluetooth)
-#define CONSOLE_PRESENT
+//#define CONSOLE_PRESENT
 #define CONSOLE_SOFTWARE
 
 // console types implementation
@@ -375,75 +375,82 @@ private:
 };
 
 
-
 /**
  * @brief The DemoMode class runs an automated demo sequence, taking control of the main system loop.
  */
 class DemoMode {
 private:
     ChappieEars *mEars;
-    bool mHasJumper;
-    bool mSoftJumper;
-    bool mWasEnabled;
     long mNextDeadlineMs;
 
 public:
     DemoMode(ChappieEars *chappieEars)
         : mEars(chappieEars)
-        , mHasJumper(false)
-        , mSoftJumper(false)
-        , mWasEnabled(false)
     {
     }
 
-    bool getEnabled() {
-        mHasJumper = digitalRead(LILY_PIN_DEMO_MODE) == LOW || mSoftJumper;
-        return mHasJumper || mWasEnabled;
+    void intro() {
+        for (int i = 300; i > 50; i -= i/3) {
+            digitalWrite(LILY_PIN_LED, HIGH);
+            delay(i/2);
+            digitalWrite(LILY_PIN_LED, LOW);
+            delay(i/2);
+        }
+        mNextDeadlineMs = 0;
     }
 
-    bool setSoftEnablement(bool enabled) {
-        mSoftJumper = enabled;
+    void outro() {
+        mEars->setLeftEar(1);
+        mEars->setRightEar(1);
     }
 
     void run() {
-        // if just enabled: intro
-        if (!mWasEnabled) {
-            for (int i = 300; i > 50; i -= i/3) {
-                digitalWrite(LILY_PIN_LED, HIGH);
-                delay(i/2);
-                digitalWrite(LILY_PIN_LED, LOW);
-                delay(i/2);
-            }
-            mNextDeadlineMs = 0;
-        }
-
-        // if just disabled: outro
-        if (!mHasJumper) {
-            if (mWasEnabled) {
-                mWasEnabled = false;
-                mEars->setLeftEar(1);
-                mEars->setRightEar(1);
-            }
-            return;
-        }
-
         // if enought time passed, randomize the positions
         long currentTimeMs = millis();
         if (currentTimeMs < mNextDeadlineMs)
             return;
 
         // move the ears to a random point in space
-        float nextLeft = (float)random(-10, 101) / 100.0f;
-        float nextRight = (float)random(-10, 101) / 100.0f;
-        mEars->setLeftEar(nextLeft);
-        mEars->setRightEar(nextRight);
+        if (random(100) > 70) {
+            float nextLeft = (float)random(-10, 101) / 100.0f;
+            mEars->setLeftEar(nextLeft);
+        }
+        if (random(100) > 70) {
+            float nextRight = (float)random(-10, 101) / 100.0f;
+            mEars->setRightEar(nextRight);
+        }
 
         // wait up to 2.5s with a trapezoidal probability distribution
         mNextDeadlineMs = currentTimeMs + random(2000) + random(500);
         if (random(100) >= 95)
             mNextDeadlineMs += random(15000);
-        mWasEnabled = true;
-        return;
+    }
+};
+
+
+/**
+ * @brief React to Analog inputs
+ */
+class AnalogMode {
+private:
+    ChappieEars *mEars;
+
+public:
+    AnalogMode(ChappieEars *chappieEars)
+        : mEars(chappieEars)
+    {
+    }
+
+    void intro() {
+        for (int i = 300; i > 50; i -= i/3) {
+            digitalWrite(LILY_PIN_LED, HIGH);
+            delay(i/2);
+            digitalWrite(LILY_PIN_LED, LOW);
+            delay(i/2);
+        }
+    }
+
+    void run() {
     }
 };
 
@@ -452,7 +459,8 @@ public:
 // runtime globals
 ChappieEars * sChappieEars;
 BlueLink * sBlueLink;
-DemoMode *sDemoMode = 0;
+DemoMode * sDemoMode;
+AnalogMode * sAnalogMode;
 byte sCommandBuffer[4];
 bool readSimpleCommand(Stream *stream);
 bool executeCommandPacket(const byte *command);
@@ -468,6 +476,8 @@ void setupAndExplainPullup(int pin, const char * text) {
 
 void setup() {
     initOutput(LILY_PIN_LED, HIGH);
+    initOutput(LILY_PIN_SERVO_L_EAR, LOW);
+    initOutput(LILY_PIN_SERVO_R_EAR, LOW);
 
     // console
     initConsole();
@@ -475,10 +485,11 @@ void setup() {
 
     // i/os
     CONSOLE_LINE(" * init I/O");
-    setupAndExplainPullup(LILY_PIN_BT_RECONFIG, "BT reconfigure (boot)");
-    setupAndExplainPullup(LILY_PIN_SIT_MODE, "SIT mode");
-    setupAndExplainPullup(LILY_PIN_STANDUP_MODE, "StandUp mode");
-    setupAndExplainPullup(LILY_PIN_DEMO_MODE, "DEMO mode");
+    setupAndExplainPullup(LILY_PIN_MODE_ANALOG, "Analog  mode ");
+    setupAndExplainPullup(LILY_PIN_MODE_SIT,    "Sit     mode ");
+    setupAndExplainPullup(LILY_PIN_MODE_STANDUP,"StandUp mode ");
+    setupAndExplainPullup(LILY_PIN_MODE_DEMO,   "DEMO    mode ");
+    setupAndExplainPullup(LILY_PIN_BT_RECONFIG, "BT reconfigure (boot) ");
     delay(100);
 
     // init Bluetooth
@@ -493,6 +504,7 @@ void setup() {
 
     // init misc
     sDemoMode = new DemoMode(sChappieEars);
+    sAnalogMode = new AnalogMode(sChappieEars);
 
     // explain...
     CONSOLE_LINE("Chappie Ready!");
@@ -500,32 +512,48 @@ void setup() {
 }
 
 
+int sCurrentMode = 0;
+int sForcedRemoteMode = 0;
 
 void loop() {
     // uncomment the following 2 lines to enable a direct talk with the BT modem
     //crossStreams(&Serial, _Console);
     //return;
 
-    if (digitalRead(LILY_PIN_SIT_MODE) == LOW) {
-        // [SIT] mode
-        sChappieEars->setLeftEar(-1);
-        sChappieEars->setRightEar(-1);
-    } if (digitalRead(LILY_PIN_STANDUP_MODE) == LOW) {
-        // [STANDUP] mode
-        sChappieEars->setLeftEar(1);
-        sChappieEars->setRightEar(1);
-    } else if (sDemoMode->getEnabled()) {
-        // [DEMO] mode (enabled with jumper at boot time, or via software)
-        sDemoMode->run();
-    } else {
-        // Analog Input Mode
-        // TODO ...
+    // check the next mode (and execute instant sequences)
+    int nextMode = sForcedRemoteMode;
+    if (digitalRead(LILY_PIN_MODE_SIT) == LOW)
+        nextMode = 1;
+    else if (digitalRead(LILY_PIN_MODE_STANDUP) == LOW)
+        nextMode = 2;
+    else if (digitalRead(LILY_PIN_MODE_ANALOG) == LOW)
+        nextMode = 3;
+    else if (digitalRead(LILY_PIN_MODE_DEMO) == LOW)
+        nextMode = 4;
+
+    // execute transitions
+    if (nextMode && nextMode != sCurrentMode) {
+        // exit previous mode
+        switch (sCurrentMode) {
+        case 4: sDemoMode->outro(); break;
+        }
+
+        // enter current mode
+        sForcedRemoteMode = 0;
+        sCurrentMode = nextMode;
+        switch (sCurrentMode) {
+        case 1: sChappieEars->setLeftEar(-1); sChappieEars->setRightEar(-1); break;
+        case 2: sChappieEars->setLeftEar(1); sChappieEars->setRightEar(1); break;
+        case 3: sAnalogMode->intro(); break;
+        case 4: sDemoMode->intro(); break;
+        }
     }
 
-    // vital motion update
-#ifdef EARS_MAX_SPEED
-    sChappieEars->loop();
-#endif
+    // run current mode
+    switch (sCurrentMode) {
+    case 3: sAnalogMode->run(); break;
+    case 4: sDemoMode->run(); break;
+    }
 
     // check the BT serial for new commands
     bool hasNewCommand = false;
@@ -542,6 +570,11 @@ void loop() {
     if (hasNewCommand)
         if (executeCommandPacket(sCommandBuffer))
             digitalWrite(LILY_PIN_LED, HIGH);
+
+    // vital motion update
+#ifdef EARS_MAX_SPEED
+    sChappieEars->loop();
+#endif
 
     // upper limit to the loop
     delay(MASTER_LOOP_DELAY);
@@ -572,12 +605,14 @@ bool executeCommandPacket(const byte *msg) {
         float nRight = ((float)rValue2 - 100.0f) / 100.0f;
         sChappieEars->setLeftEar(nLeft);
         sChappieEars->setRightEar(nRight);
+        sForcedRemoteMode = 5;
         } return true;
 
     // C: 04 -> set flag (target: flag index) (flag specific behavior)
     case 0x04:
         switch (rTarget) {
-        case 1: sDemoMode->setSoftEnablement(rValue1 != 0); return true;
+        case 1: sForcedRemoteMode = rValue1 ? 4 : 5; return true;
+        case 2: sForcedRemoteMode = rValue1 ? 3 : 5; return true;
         }; break;
     }
 
