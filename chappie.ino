@@ -1,36 +1,37 @@
 // Copyright Enrico Ros 2016. All rights reserved.
 
 #include <Arduino.h>
-
-// uncomment the following for talking directly to the BT module (after initialization)
-//#define DEBUG_CONSOLE_2_BT_PASSTHROUGH
-
-// uncomment the following to give commands from the Console: U,D,M,L,R
-#define DEBUG_CONSOLE_2_SERVOS
+#include <Servo.h>
 
 // uncomment the following to enable debugging on errors (disable for prod!)
 //#define DEBUGGING
 
 
 // misc constants
-#define LILY_PIN_LED            LED_BUILTIN // D13
-#define LILY_HW_SERIAL_SPEED    57600   // fixed, can't go beyond it (errors)
-#define MASTER_LOOP_DELAY       19
+#define LILY_PIN_LED            13  // D13
+#define LILY_HW_SERIAL_SPEED    57600 // fixed, can't go beyond it (errors)
+#define MASTER_LOOP_DELAY       19  // ms
 
 // additional console
 #define LILY_SW_CONSOLE_SPEED   57600
-#define LILY_PIN_SW_CONSOLE_RX  2  // D2
-#define LILY_PIN_SW_CONSOLE_TX  3  // D3
+#define LILY_PIN_SW_CONSOLE_RX  2   // D2
+#define LILY_PIN_SW_CONSOLE_TX  3   // D3
 
 // BT pins
-#define LILY_PIN_BT_RECONFIG    4 // set to GND to reconfig
+#define LILY_PIN_BT_RECONFIG    4   // D4 (pullup)
 
 // Servo(s) pins and params
-#define LILY_PIN_SERVO_L_EAR    11
-#define LILY_PIN_SERVO_R_EAR    12
+#define LILY_PIN_SERVO_L_EAR    11  // D11
+#define LILY_PIN_SERVO_R_EAR    12  // D12
 #define EARS_MAX_SPEED          16  // max steps per loop
 #define EARS_MAX_ACCEL          2   // max dSteps per loop
 #define EARS_MAGIC_DECEL        2   // magic constant to start decelerating at the right time
+
+// constant operation pins
+#define LILY_PIN_STANDUP_MODE   7   // D7 (pullup)
+#define LILY_PIN_DEMO_MODE      8   // D8 (pullup)
+
+
 
 
 // the global console: can be null, can be Software (since the HW serial is busy with bluetooth)
@@ -57,8 +58,6 @@ void initConsole() {
 #endif
 #else
 #undef CONSOLE_SOFTWARE
-#undef DEBUG_CONSOLE_2_BT_PASSTHROUGH
-#undef DEBUG_CONSOLE_2_SERVOS
 #define CONSOLE_ADD(...)
 #define CONSOLE_LINE(...)
 void initConsole() {}
@@ -69,16 +68,6 @@ static void initOutput(int pin, int level) {
     pinMode(pin, OUTPUT);
     digitalWrite(pin, level);
 }
-
-/*static void configureJumper(int pin, int pinGnd) {
-    pinMode(pin, INPUT);
-    digitalWrite(pin, HIGH);
-    initOutput(pinGnd, LOW);
-}
-
-static bool hasJumper(int pin, int pinGnd_unused) {
-    return digitalRead(pin) == LOW;
-}*/
 
 void crossStreams(Stream *s1, Stream *s2) {
     while (s1 && s1->available()) {
@@ -114,9 +103,6 @@ public:
     }
 
     void init() const {
-        pinMode(LILY_PIN_BT_RECONFIG, INPUT_PULLUP);
-        delay(100);
-
         // check if the user requested to reconfigure
         if (digitalRead(LILY_PIN_BT_RECONFIG) == LOW)
             initReconfigure();
@@ -263,7 +249,6 @@ private:
 
 
 
-#include <Servo.h>
 /**
  * This class encapsulates the motor control of Chappie
  */
@@ -390,22 +375,101 @@ private:
 
 
 
+/**
+ * @brief The DemoMode class runs an automated demo sequence, taking control of the main system loop.
+ */
+class DemoMode {
+private:
+    ChappieEars *mEars;
+    bool mHasJumper;
+    bool mSoftJumper;
+    bool mWasEnabled;
+    long mNextDeadlineMs;
+
+public:
+    DemoMode(ChappieEars *chappieEars)
+        : mEars(chappieEars)
+        , mHasJumper(false)
+        , mSoftJumper(false)
+        , mWasEnabled(false)
+    {
+    }
+
+    bool getEnabled() {
+        mHasJumper = digitalRead(LILY_PIN_DEMO_MODE) == LOW || mSoftJumper;
+        return mHasJumper || mWasEnabled;
+    }
+
+    bool setSoftEnablement(bool enabled) {
+        mSoftJumper = enabled;
+    }
+
+    void run() {
+        // if just enabled: intro
+        if (!mWasEnabled) {
+            for (int i = 300; i > 50; i -= i/3) {
+                digitalWrite(LILY_PIN_LED, HIGH);
+                delay(i/2);
+                digitalWrite(LILY_PIN_LED, LOW);
+                delay(i/2);
+            }
+            mNextDeadlineMs = 0;
+        }
+
+        // if just disabled: outro
+        if (!mHasJumper) {
+            if (mWasEnabled) {
+                mWasEnabled = false;
+                mEars->setLeftEar(1);
+                mEars->setRightEar(1);
+            }
+            return;
+        }
+
+        // if enought time passed, randomize the positions
+        long currentTimeMs = millis();
+        if (currentTimeMs < mNextDeadlineMs)
+            return;
+
+        // move the ears to a random point in space
+        float nextLeft = (float)random(-10, 101) / 100.0f;
+        float nextRight = (float)random(-10, 101) / 100.0f;
+        mEars->setLeftEar(nextLeft);
+        mEars->setRightEar(nextRight);
+
+        // wait up to 2.5s with a trapezoidal probability distribution
+        mNextDeadlineMs = currentTimeMs + random(2000) + random(500);
+        if (random(100) >= 95)
+            mNextDeadlineMs += random(15000);
+        mWasEnabled = true;
+        return;
+    }
+};
+
+
+
 // runtime globals
 ChappieEars * sChappieEars;
 BlueLink * sBlueLink;
-bool sDemoModeEnabled = false;
+DemoMode *sDemoMode = 0;
 byte sCommandBuffer[4];
 bool readSimpleCommand(Stream *stream);
 bool executeCommandPacket(const byte *command);
 
 
 void setup() {
-    // high during setup
     initOutput(LILY_PIN_LED, HIGH);
 
     // console
     initConsole();
     CONSOLE_LINE("Chappie Booting...");
+
+    // i/os
+    CONSOLE_LINE(" * init I/O");
+    pinMode(LILY_PIN_BT_RECONFIG, INPUT_PULLUP);
+    pinMode(LILY_PIN_STANDUP_MODE, INPUT_PULLUP);
+    pinMode(LILY_PIN_DEMO_MODE, INPUT_PULLUP);
+    delay(100);
 
     // init Bluetooth
     CONSOLE_LINE(" * init BT");
@@ -417,6 +481,9 @@ void setup() {
     sChappieEars = new ChappieEars();
     sChappieEars->init(LILY_PIN_SERVO_L_EAR, LILY_PIN_SERVO_R_EAR);
 
+    // init misc
+    sDemoMode = new DemoMode(sChappieEars);
+
     // explain...
     CONSOLE_LINE("Chappie Ready!");
     digitalWrite(LILY_PIN_LED, LOW);
@@ -424,33 +491,31 @@ void setup() {
 
 
 
-
 void loop() {
-    // vital fast loops
+    // uncomment the following 2 lines to enable a direct talk with the BT modem
+    //crossStreams(&Serial, _Console);
+    //return;
+
+    if (digitalRead(LILY_PIN_STANDUP_MODE) == LOW) {
+        // [STANDUP] mode
+        sChappieEars->setLeftEar(1);
+        sChappieEars->setRightEar(1);
+    } else if (sDemoMode->getEnabled()) {
+        // [DEMO] mode (enabled with jumper at boot time, or via software)
+        sDemoMode->run();
+    }
+
+    // vital motion update
 #ifdef EARS_MAX_SPEED
     sChappieEars->loop();
 #endif
-
-    // debugging console<->bt passthrough
-#ifdef DEBUG_CONSOLE_2_BT_PASSTHROUGH
-    crossStreams(&Serial, _Console);
-    return;
-#endif
-
-    // [DEMO] mode (enabled with jumper at boot time)
-    if (sDemoModeEnabled) {
-        /*bool skipRest = sDemoModeEnabled->run();
-        if (skipRest)
-            return;*/
-        //digitalWrite(LILY_PIN_LED, HIGH);
-    }
 
     // check the BT serial for new commands
     bool hasNewCommand = false;
     if (sBlueLink->readPacket(sCommandBuffer, 4))
         hasNewCommand = true;
 
-#ifdef DEBUG_CONSOLE_2_SERVOS
+#ifdef CONSOLE_PRESENT
     // check the console for new commands
     if (!hasNewCommand)
         hasNewCommand = readSimpleCommand(_Console);
@@ -468,7 +533,6 @@ void loop() {
     if (hasNewCommand)
         digitalWrite(LILY_PIN_LED, LOW);
 }
-
 
 
 bool executeCommandPacket(const byte *msg) {
@@ -496,7 +560,7 @@ bool executeCommandPacket(const byte *msg) {
     // C: 04 -> set flag (target: flag index) (flag specific behavior)
     case 0x04:
         switch (rTarget) {
-        case 1: sDemoModeEnabled = rValue1 != 0; return true;
+        case 1: sDemoMode->setSoftEnablement(rValue1 != 0); return true;
         }; break;
     }
 
