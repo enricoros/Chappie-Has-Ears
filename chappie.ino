@@ -28,7 +28,8 @@
 #define EARS_MAGIC_DECEL        2   // magic constant to start decelerating at the right time
 
 // constant operation pins
-#define LILY_PIN_MODE_ANALOG    6   // D7 (pullup)
+#define LILY_PIN_MODE_ANALOG_A  5   // D5 (pullup)
+#define LILY_PIN_MODE_ANALOG_B  6   // D6 (pullup)
 #define LILY_PIN_MODE_SIT       7   // D7 (pullup)
 #define LILY_PIN_MODE_STANDUP   8   // D8 (pullup)
 #define LILY_PIN_MODE_DEMO      9   // D9 (pullup)
@@ -368,7 +369,9 @@ private:
 #endif
 
         void apply(int pos) {
-            servo.write(pos);
+            CONSOLE_ADD("apply: ");
+            CONSOLE_LINE(pos);
+            servo.write(constrain(pos, 0, 180));
             currentPos = pos;
         }
     } m_LeftEar, m_RightEar;
@@ -428,29 +431,148 @@ public:
 };
 
 
+class LPF {
+#define LPF_MAX_SIZE 16
+public:
+    void init(int size) {
+        mSize = min(size, LPF_MAX_SIZE);
+        mSizeF = (float)mSize;
+        mItems = 0;
+        mHeadIdx = 0;
+    }
+
+    // @return true if buffer is full and we ca read
+    bool add(float n) {
+        mBuffer[mHeadIdx++] = n;
+        if (mHeadIdx >= mSize)
+            mHeadIdx = 0;
+        if (mItems < mSize)
+            mItems++;
+        return mItems == mSize;
+    }
+
+    float getAvg() const {
+        float sum = 0;
+        // NOTE: keeping a running sum would probably accumulate errors
+        for (int i = 0; i < mSize; i++)
+            sum += mBuffer[i];
+        return sum / mSizeF;
+    }
+
+private:
+    int mSize;
+    float mSizeF;
+    int mItems;
+    float mBuffer[LPF_MAX_SIZE];
+    int mHeadIdx;
+};
+
 /**
  * @brief React to Analog inputs
  */
 class AnalogMode {
 private:
     ChappieEars *mEars;
+    int mLPin, mLMin, mLMax;
+    int mRPin, mRMin, mRMax;
+    bool mInverted;
+    bool mLearnOnFly;
+    LPF mLLpf, mRLpf;
 
 public:
     AnalogMode(ChappieEars *chappieEars)
         : mEars(chappieEars)
-    {
+    { }
+
+    void intro(int type) {
+        switch (type) {
+        case 1:
+            mInverted = false;
+            mLearnOnFly = false;
+            mLPin = A0;
+            mRPin = A1;
+            break;
+        case 2:
+            mInverted = true;
+            mLearnOnFly = false;
+            mLPin = A2;
+            mRPin = A3;
+            break;
+        default:
+            CONSOLE_LINE("wrong analog mode");
+            return;
+        }
+
+        showFeedback(false);
+        calibrate();
+        showFeedback(true);
+
+        mLLpf.init(8);
+        mRLpf.init(8);
     }
 
-    void intro() {
-        for (int i = 300; i > 50; i -= i/3) {
+    void calibrate() {
+        mLMin = mRMin = 1023;
+        mLMax = mRMax = 0;
+        // do 200 reads in typical delay
+        int value;
+        for (int i = 0; i < 4000; i += 20) {
+#define READ_LEARN_MINMAX(val, pin, inv, outMin, outMax) \
+            val = analogRead(pin); if (inv) val = 1023 - val; \
+            if (val > outMax) outMax = val; if (val < outMin) outMin = val;
+            // learn
+            READ_LEARN_MINMAX(value, mLPin, mInverted, mLMin, mLMax);
+            READ_LEARN_MINMAX(value, mRPin, mInverted, mRMin, mRMax);
+            // like in the prod run
+            delay(20);
+        }
+        // safety constraints
+#define KEEP_CONSTRAINED(max, min, low, high, gap) \
+        if (min < low) min = low; if (max > high) max = high; \
+        if ((max - min) < gap) { max = min + gap/2; min -= gap/2; } \
+        if (min < low) min = low; if (max > high) max = high;
+        KEEP_CONSTRAINED(mLMax, mLMin, 0, 1023, 60);
+        KEEP_CONSTRAINED(mRMax, mRMin, 0, 1023, 60);
+    }
+
+    void run() {
+        int tmpValue;
+        float nL, nR;
+
+        // perform the reads and normalization
+#define PROCESS_CHANNEL(raw, pin, outMin, outMax, outNV, lpf, setter) \
+        raw = analogRead(pin); \
+        if (mInverted) raw = 1023 - raw; \
+        if (mLearnOnFly) { \
+            if (raw < outMin) outMin = raw; \
+            if (raw > outMax) outMax = raw; \
+        } else raw = constrain(raw, outMin, outMax); \
+        if (true) { /* linear mapping */ outNV = 2 * ((float)(raw - outMin)) / ((float)(outMax - outMin)) - 1; } \
+        if (lpf.add(outNV)) mEars->setter(lpf.getAvg());
+
+        // read and aply
+        PROCESS_CHANNEL(tmpValue, mLPin, mLMin, mLMax, nL, mLLpf, setLeftEar);
+        PROCESS_CHANNEL(tmpValue, mRPin, mRMin, mRMax, nR, mRLpf, setRightEar);
+
+        CONSOLE_LINE(mLLpf.getAvg());
+
+        // console output
+#if 0
+        CONSOLE_ADD("L: ");
+        CONSOLE_ADD(nL);
+        CONSOLE_ADD(",  R: ");
+        CONSOLE_ADD(nR);
+        CONSOLE_LINE(" ");
+#endif
+    }
+
+    void showFeedback(bool fast) {
+        for (int i = (fast ? 300 : 900); i > 50; i -= i/3) {
             digitalWrite(LILY_PIN_LED, HIGH);
             delay(i/2);
             digitalWrite(LILY_PIN_LED, LOW);
             delay(i/2);
         }
-    }
-
-    void run() {
     }
 };
 
@@ -478,6 +600,10 @@ void setup() {
     initOutput(LILY_PIN_LED, HIGH);
     initOutput(LILY_PIN_SERVO_L_EAR, LOW);
     initOutput(LILY_PIN_SERVO_R_EAR, LOW);
+    pinMode(A0, INPUT_PULLUP);
+    pinMode(A1, INPUT_PULLUP);
+    pinMode(A2, INPUT_PULLUP);
+    pinMode(A3, INPUT_PULLUP);
 
     // console
     initConsole();
@@ -485,11 +611,12 @@ void setup() {
 
     // i/os
     CONSOLE_LINE(" * init I/O");
-    setupAndExplainPullup(LILY_PIN_MODE_ANALOG, "Analog  mode ");
-    setupAndExplainPullup(LILY_PIN_MODE_SIT,    "Sit     mode ");
-    setupAndExplainPullup(LILY_PIN_MODE_STANDUP,"StandUp mode ");
-    setupAndExplainPullup(LILY_PIN_MODE_DEMO,   "DEMO    mode ");
-    setupAndExplainPullup(LILY_PIN_BT_RECONFIG, "BT reconfigure (boot) ");
+    setupAndExplainPullup(LILY_PIN_MODE_ANALOG_A,   "Analog A mode ");
+    setupAndExplainPullup(LILY_PIN_MODE_ANALOG_B,   "Analog B mode ");
+    setupAndExplainPullup(LILY_PIN_MODE_SIT,        "Sit      mode ");
+    setupAndExplainPullup(LILY_PIN_MODE_STANDUP,    "StandUp  mode ");
+    setupAndExplainPullup(LILY_PIN_MODE_DEMO,       "DEMO     mode ");
+    setupAndExplainPullup(LILY_PIN_BT_RECONFIG,     "BT reconfigure (boot) ");
     delay(100);
 
     // init Bluetooth
@@ -512,8 +639,17 @@ void setup() {
 }
 
 
-int sCurrentMode = 0;
-int sForcedRemoteMode = 0;
+enum Mode {
+    Mode_Undefined  = 0,
+    Mode_Sit        = 1,
+    Mode_StandUp    = 2,
+    Mode_AnalogA    = 3,
+    Mode_AnalogB    = 4,
+    Mode_Demo       = 5,
+    Mode_BT         = 6
+};
+Mode sCurrentMode = Mode_Undefined;
+Mode sForcedRemoteMode = Mode_Undefined;
 
 void loop() {
     // uncomment the following 2 lines to enable a direct talk with the BT modem
@@ -521,38 +657,41 @@ void loop() {
     //return;
 
     // check the next mode (and execute instant sequences)
-    int nextMode = sForcedRemoteMode;
+    Mode nextMode = sForcedRemoteMode;
     if (digitalRead(LILY_PIN_MODE_SIT) == LOW)
-        nextMode = 1;
+        nextMode = Mode_Sit;
     else if (digitalRead(LILY_PIN_MODE_STANDUP) == LOW)
-        nextMode = 2;
-    else if (digitalRead(LILY_PIN_MODE_ANALOG) == LOW)
-        nextMode = 3;
+        nextMode = Mode_StandUp;
+    else if (digitalRead(LILY_PIN_MODE_ANALOG_A) == LOW)
+        nextMode = Mode_AnalogA;
+    else if (digitalRead(LILY_PIN_MODE_ANALOG_B) == LOW)
+        nextMode = Mode_AnalogB;
     else if (digitalRead(LILY_PIN_MODE_DEMO) == LOW)
-        nextMode = 4;
+        nextMode = Mode_Demo;
 
     // execute transitions
     if (nextMode && nextMode != sCurrentMode) {
         // exit previous mode
         switch (sCurrentMode) {
-        case 4: sDemoMode->outro(); break;
+        case Mode_Demo: sDemoMode->outro(); break;
         }
 
         // enter current mode
-        sForcedRemoteMode = 0;
+        sForcedRemoteMode = Mode_Undefined;
         sCurrentMode = nextMode;
         switch (sCurrentMode) {
-        case 1: sChappieEars->setLeftEar(-1); sChappieEars->setRightEar(-1); break;
-        case 2: sChappieEars->setLeftEar(1); sChappieEars->setRightEar(1); break;
-        case 3: sAnalogMode->intro(); break;
-        case 4: sDemoMode->intro(); break;
+        case Mode_Sit: sChappieEars->setLeftEar(-1); sChappieEars->setRightEar(-1); break;
+        case Mode_StandUp: sChappieEars->setLeftEar(1); sChappieEars->setRightEar(1); break;
+        case Mode_AnalogA: sAnalogMode->intro(1); break;
+        case Mode_AnalogB: sAnalogMode->intro(2); break;
+        case Mode_Demo: sDemoMode->intro(); break;
         }
     }
 
     // run current mode
     switch (sCurrentMode) {
-    case 3: sAnalogMode->run(); break;
-    case 4: sDemoMode->run(); break;
+    case Mode_AnalogA: case Mode_AnalogB: sAnalogMode->run(); break;
+    case Mode_Demo: sDemoMode->run(); break;
     }
 
     // check the BT serial for new commands
@@ -605,14 +744,15 @@ bool executeCommandPacket(const byte *msg) {
         float nRight = ((float)rValue2 - 100.0f) / 100.0f;
         sChappieEars->setLeftEar(nLeft);
         sChappieEars->setRightEar(nRight);
-        sForcedRemoteMode = 5;
+        sForcedRemoteMode = Mode_BT;
         } return true;
 
     // C: 04 -> set flag (target: flag index) (flag specific behavior)
     case 0x04:
         switch (rTarget) {
-        case 1: sForcedRemoteMode = rValue1 ? 4 : 5; return true;
-        case 2: sForcedRemoteMode = rValue1 ? 3 : 5; return true;
+        case 1: sForcedRemoteMode = rValue1 ? Mode_Demo : Mode_BT; return true;
+        case 2: sForcedRemoteMode = rValue1 ? Mode_AnalogA : Mode_BT; return true;
+        case 3: sForcedRemoteMode = rValue1 ? Mode_AnalogB : Mode_BT; return true;
         }; break;
     }
 
