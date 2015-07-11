@@ -514,6 +514,8 @@ public:
     void calibrate() {
         mLMin = mRMin = 1023;
         mLMax = mRMax = 0;
+        // wait a bit before we begin, to let the user settle
+        delay(2000);
         // do 200 reads in typical delay
         int value;
         for (int i = 0; i < 4000; i += 20) {
