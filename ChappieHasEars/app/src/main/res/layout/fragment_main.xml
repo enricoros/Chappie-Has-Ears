@@ -4,7 +4,6 @@
     android:layout_height="match_parent"
     android:background="#d93d0d"
     android:orientation="vertical"
-    android:paddingBottom="@dimen/activity_vertical_margin"
     android:paddingLeft="@dimen/activity_horizontal_margin"
     android:paddingRight="@dimen/activity_horizontal_margin"
     android:paddingTop="@dimen/activity_vertical_margin"
@@ -34,14 +33,14 @@
         android:layout_width="300dp"
         android:layout_height="220dp"
         android:layout_gravity="center"
-        android:layout_marginTop="8dp"
+        android:layout_marginTop="0dp"
         android:background="#f0722d" />
 
     <SeekBar
         android:id="@+id/seekBarLeft"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
+        android:layout_marginTop="8dp"
         android:max="200" />
 
     <SeekBar
@@ -49,6 +48,53 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:max="200" />
+
+    <LinearLayout
+        android:layout_width="fill_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/modeA1"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:tag="3"
+            android:text="A1"/>
+
+        <Button
+            android:id="@+id/modeA2"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:tag="4"
+            android:text="A2"/>
+
+        <Button
+            android:id="@+id/modeDemo"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:tag="5"
+            android:text="D"/>
+
+        <Button
+            android:id="@+id/modeStand"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:tag="2"
+            android:text="Up"/>
+
+        <Button
+            android:id="@+id/modeSit"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:tag="1"
+            android:text="Dn"/>
+
+    </LinearLayout>
 
     <TextView
         android:id="@+id/textCool"
@@ -63,31 +109,6 @@
         android:textColor="#333"
         android:textStyle="italic" />
 
-    <LinearLayout
-        android:layout_width="fill_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginLeft="48dp"
-        android:layout_marginRight="48dp"
-        android:orientation="horizontal">
-
-        <CheckBox
-            android:id="@+id/checkDemo"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:gravity="center"
-            android:text="Demo"
-            android:textColor="#333" />
-
-        <CheckBox
-            android:id="@+id/checkOpt1"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:gravity="center"
-            android:text="Opt"
-            android:textColor="#333" />
-    </LinearLayout>
 
     <EditText
         android:id="@+id/editSerialComm"

@@ -1,5 +1,6 @@
 package com.enricoros.chappiehasears;
 
+import android.app.Activity;
 import android.app.Fragment;
 import android.os.Bundle;
 import android.view.LayoutInflater;
@@ -9,6 +10,7 @@ import android.widget.CheckBox;
 import android.widget.CompoundButton;
 import android.widget.RatingBar;
 import android.widget.SeekBar;
+import android.widget.Toast;
 
 /**
  * A placeholder fragment containing a simple view.
@@ -92,12 +94,12 @@ public class MainActivityFragment extends Fragment implements BluetoothLink.List
         mRightSeekBar.setOnSeekBarChangeListener(mSeekBarsChangeListener);
 
         // demo / option buttons
-        final CompoundButton.OnCheckedChangeListener onCheckedChangeListener = new CompoundButton.OnCheckedChangeListener() {
+        /*final CompoundButton.OnCheckedChangeListener onCheckedChangeListener = new CompoundButton.OnCheckedChangeListener() {
             @Override
             public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
                 if (mBTLink != null) {
                     int index = (Integer) buttonView.getTag();
-                    mBTLink.sendFlag(index, isChecked);
+                    mBTLink.sendFlagNumeric(index, isChecked ? 1 : 0);
                 }
             }
         };
@@ -106,7 +108,22 @@ public class MainActivityFragment extends Fragment implements BluetoothLink.List
         checkDemo.setOnCheckedChangeListener(onCheckedChangeListener);
         final CheckBox checkOpt1 = (CheckBox) rootView.findViewById(R.id.checkOpt1);
         checkOpt1.setTag((Integer) 2);
-        checkOpt1.setOnCheckedChangeListener(onCheckedChangeListener);
+        checkOpt1.setOnCheckedChangeListener(onCheckedChangeListener);*/
+
+        // modes
+        final View.OnClickListener modeClick = new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                int mode = Integer.parseInt((String) v.getTag());
+                if (mBTLink != null)
+                    mBTLink.sendFlagNumeric(4, mode);
+            }
+        };
+        rootView.findViewById(R.id.modeA1).setOnClickListener(modeClick);
+        rootView.findViewById(R.id.modeA2).setOnClickListener(modeClick);
+        rootView.findViewById(R.id.modeDemo).setOnClickListener(modeClick);
+        rootView.findViewById(R.id.modeStand).setOnClickListener(modeClick);
+        rootView.findViewById(R.id.modeSit).setOnClickListener(modeClick);
 
         // edit box buttons, to send strings
         /*View sendButton = rootView.findViewById(R.id.sendButton1);
@@ -116,7 +133,14 @@ public class MainActivityFragment extends Fragment implements BluetoothLink.List
 
         updateCurrentPosition(INITIAL_LEFT_POS, INITIAL_RIGHT_POS);
         m_ratingBar.setOnClickListener(mDefaultInputListener);
-        rootView.findViewById(R.id.textCool).setOnClickListener(mDefaultInputListener);
+        rootView.findViewById(R.id.textCool).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                final Activity activity = getActivity();
+                activity.finish();
+                Toast.makeText(activity, "Goodbye", Toast.LENGTH_SHORT);
+            }
+        });
 
         return rootView;
     }

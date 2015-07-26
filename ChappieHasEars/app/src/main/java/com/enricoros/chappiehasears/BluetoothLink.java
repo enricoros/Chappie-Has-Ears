@@ -111,8 +111,8 @@ public class BluetoothLink {
     /**
      * Sets an application dependent flag (not that the rest is not app dependent...)
      */
-    public void sendFlag(int index, boolean on) {
-        sendCommand4((byte)0x04,(byte)index, (byte)(on ? 1 : 0), 0);
+    public void sendFlagNumeric(int index, int flag) {
+        sendCommand4((byte)0x04,(byte)index, (byte)flag, 0);
     }
 
     /**
