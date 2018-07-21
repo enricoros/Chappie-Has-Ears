@@ -89,21 +89,21 @@ public class BluetoothLink {
 
     /**
      * @param earIndex 1..N
-     * @param value -1: max mack .. 1: max forward
+     * @param value    -1: max mack .. 1: max forward
      */
     public void sendEarPosition(int earIndex, float value) {
-        sendCommand4((byte)0x01, (byte)earIndex,
+        sendCommand4((byte) 0x01, (byte) earIndex,
                 marshallNormalizePosition(value), 0);
     }
 
     /**
      * Controls the motion of the ears
      *
-     * @param leftEar left ear; -1: max back: 0: stop, 1: max forward
+     * @param leftEar  left ear; -1: max back: 0: stop, 1: max forward
      * @param rightEar right ear; -1: max back: 0: stop, 1: max forward
      */
     public void sendEarsPosition(float leftEar, float rightEar) {
-        sendCommand4((byte)0x02, (byte)0x01,
+        sendCommand4((byte) 0x02, (byte) 0x01,
                 marshallNormalizePosition(leftEar),
                 marshallNormalizePosition(rightEar));
     }
@@ -112,7 +112,7 @@ public class BluetoothLink {
      * Sets an application dependent flag (not that the rest is not app dependent...)
      */
     public void sendFlagNumeric(int index, int flag) {
-        sendCommand4((byte)0x04,(byte)index, (byte)flag, 0);
+        sendCommand4((byte) 0x04, (byte) index, (byte) flag, 0);
     }
 
     /**
@@ -123,14 +123,7 @@ public class BluetoothLink {
     }
 
 
-
     /*** private stuff ahead ***/
-
-    public void doResume() {
-    }
-
-    public void doPause() {
-    }
 
     public void doTeardown() {
         closeCurrentConnection();
@@ -176,7 +169,7 @@ public class BluetoothLink {
             try {
                 tmp = mBluetoothRemoteDevice.createRfcommSocketToServiceRecord(UUID.fromString(BT_SERIAL_BOARD_UUID));
             } catch (IOException e) {
-                Logger.exception("BluetoothLink.connectToRemoteDevice: error creating Rfcomm socket to "+ mBtTargetDeviceName, e);
+                Logger.exception("BluetoothLink.connectToRemoteDevice: error creating Rfcomm socket to " + mBtTargetDeviceName, e);
             }
             mSocket = tmp;
         }
@@ -203,12 +196,15 @@ public class BluetoothLink {
             mConnectedThread.start();
         }
 
-        /** Will cancel an in-progress connection, and close the socket */
+        /**
+         * Will cancel an in-progress connection, and close the socket
+         */
         public void cancel() {
             try {
                 if (mSocket != null)
                     mSocket.close();
-            } catch (IOException e) { }
+            } catch (IOException e) {
+            }
         }
     }
 
@@ -268,7 +264,8 @@ public class BluetoothLink {
         public void cancel() {
             try {
                 mmSocket.close();
-            } catch (IOException e) { }
+            } catch (IOException e) {
+            }
         }
     }
 
@@ -289,7 +286,7 @@ public class BluetoothLink {
             String action = intent.getAction();
 
             if (BluetoothAdapter.ACTION_STATE_CHANGED.equals(action)) {
-                Logger.wtf("BluetoothLink.mReceiver: ACTION_STATE_CHANGED to "+intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1)+", from "+intent.getIntExtra(BluetoothAdapter.EXTRA_PREVIOUS_STATE, -1));
+                Logger.wtf("BluetoothLink.mReceiver: ACTION_STATE_CHANGED to " + intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1) + ", from " + intent.getIntExtra(BluetoothAdapter.EXTRA_PREVIOUS_STATE, -1));
             }
             // called for each device that has been found after a scan
             else if (BluetoothDevice.ACTION_FOUND.equals(action)) {
@@ -297,16 +294,15 @@ public class BluetoothLink {
                 BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
                 if (mBtTargetDeviceName.equals(device.getName())) {
                     if (mBluetoothRemoteDevice != null) {
-                        Logger.userVisibleMessage("BluetoothLink: ignoring found again: "+ mBtTargetDeviceName);
+                        Logger.userVisibleMessage("BluetoothLink: ignoring found again: " + mBtTargetDeviceName);
                         return;
                     }
-                    Logger.userVisibleMessage("BluetoothLink: scanned and found "+ mBtTargetDeviceName);
+                    Logger.userVisibleMessage("BluetoothLink: scanned and found " + mBtTargetDeviceName);
                     mBluetoothRemoteDevice = device;
                     // -> Connect to it!
                     connectToRemoteDevice();
                 }
-            }
-            else if (BluetoothDevice.ACTION_ACL_CONNECTED.equals(action)) {
+            } else if (BluetoothDevice.ACTION_ACL_CONNECTED.equals(action)) {
                 // Get the BluetoothDevice object from the Intent
                 BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
                 Logger.userVisibleMessage("BT Target Device Connected");
@@ -331,9 +327,8 @@ public class BluetoothLink {
                     Logger.userVisibleMessage("Unknown Bluetooth Device Disconnected");
                     //Logger.apierror("BluetoothLink: Unk FIXME!");
                 }
-            }
-            else
-                Logger.wtf("BluetoothLink.mReceiver: unhandled action "+intent.getAction()+". Fixme.");
+            } else
+                Logger.wtf("BluetoothLink.mReceiver: unhandled action " + intent.getAction() + ". Fixme.");
         }
     };
 

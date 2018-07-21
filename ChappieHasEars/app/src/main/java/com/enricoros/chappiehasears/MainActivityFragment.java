@@ -43,22 +43,9 @@ public class MainActivityFragment extends Fragment implements BluetoothLink.List
     }
 
     @Override
-    public void onResume() {
-        super.onResume();
-        if (mBTLink != null)
-            mBTLink.doResume();
-    }
-
-    @Override
-    public void onPause() {
-        if (mBTLink != null)
-            mBTLink.doPause();
-        super.onPause();
-    }
-
-    @Override
     public void onStop() {
         if (mBTLink != null) {
+            Logger.userVisibleMessage("Stopped BT");
             mBTLink.doTeardown();
             mBTLink = null;
         }
