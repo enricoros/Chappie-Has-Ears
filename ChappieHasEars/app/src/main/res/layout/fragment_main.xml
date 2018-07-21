@@ -32,7 +32,8 @@
         android:layout_width="300dp"
         android:layout_height="220dp"
         android:layout_gravity="center"
-        android:background="#f0722d"
+        android:layout_marginTop="24dp"
+        android:background="#b2dfdb"
         android:elevation="4dp" />
 
     <SeekBar
@@ -40,21 +41,25 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
-        android:max="200" />
+        android:max="200"
+        android:padding="8dp" />
 
     <SeekBar
         android:id="@+id/seekBarRight"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:max="200" />
+        android:max="200"
+        android:padding="8dp" />
 
     <LinearLayout
+        style="?android:attr/buttonBarStyle"
         android:layout_width="fill_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal">
 
         <Button
             android:id="@+id/modeA1"
+            style="?android:attr/buttonBarButtonStyle"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
@@ -63,6 +68,7 @@
 
         <Button
             android:id="@+id/modeA2"
+            style="?android:attr/buttonBarButtonStyle"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
@@ -71,6 +77,7 @@
 
         <Button
             android:id="@+id/modeDemo"
+            style="?android:attr/buttonBarButtonStyle"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
@@ -79,6 +86,7 @@
 
         <Button
             android:id="@+id/modeStand"
+            style="?android:attr/buttonBarButtonStyle"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
@@ -87,6 +95,7 @@
 
         <Button
             android:id="@+id/modeSit"
+            style="?android:attr/buttonBarButtonStyle"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"

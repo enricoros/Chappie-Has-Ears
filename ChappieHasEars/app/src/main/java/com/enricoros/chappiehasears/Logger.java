@@ -2,7 +2,6 @@ package com.enricoros.chappiehasears;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
-import android.os.Looper;
 import android.text.method.ScrollingMovementMethod;
 import android.util.Log;
 import android.widget.TextView;
@@ -84,16 +83,16 @@ public class Logger {
             mLogView.setMovementMethod(new ScrollingMovementMethod());
     }
 
-    private static boolean onUiThread() {
-        return mLogView != null && Looper.myLooper() == Looper.getMainLooper();
-    }
-
     private static void logView(String message) {
-        if (!onUiThread())
+        if (mLogView == null || mContext == null)
             return;
         final Calendar calendar = Calendar.getInstance();
-        message = calendar.get(Calendar.HOUR_OF_DAY) + ":" + calendar.get(Calendar.MINUTE) + ":" + calendar.get(Calendar.SECOND) + " " + message;
-        mLogView.setText(message + "\n" + mLogView.getText());
+        final String finalMessage = calendar.get(Calendar.HOUR_OF_DAY) + ":" +
+                calendar.get(Calendar.MINUTE) + ":" +
+                calendar.get(Calendar.SECOND) + " " + message;
+        ((MainActivity) mContext).runOnUiThread(() -> {
+            mLogView.setText(finalMessage + "\n" + mLogView.getText());
+        });
     }
 
 }

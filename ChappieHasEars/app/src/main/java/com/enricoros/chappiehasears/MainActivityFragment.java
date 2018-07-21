@@ -1,6 +1,5 @@
 package com.enricoros.chappiehasears;
 
-import android.app.Activity;
 import android.app.Fragment;
 import android.os.Bundle;
 import android.view.LayoutInflater;
@@ -28,8 +27,7 @@ public class MainActivityFragment extends Fragment implements BluetoothLink.List
     private SeekBar mRightSeekBar;
 
     // state
-    private float mLeftEarPos = 0;
-    private float mRightEarPos = 0;
+    private float[] mAxis = new float[2];
 
     public MainActivityFragment() {
     }
@@ -101,11 +99,15 @@ public class MainActivityFragment extends Fragment implements BluetoothLink.List
         checkOpt1.setTag((Integer) 2);
         checkOpt1.setOnCheckedChangeListener(onCheckedChangeListener);*/
 
-        // modes
+        // modes: send a command packet (and reflect it in the UI too)
         final View.OnClickListener modeClick = v -> {
             int mode = Integer.parseInt((String) v.getTag());
             if (mBTLink != null)
                 mBTLink.sendFlagNumeric(4, mode);
+            if (mode == 1)
+                updateCurrentPosition(-1f, -1f, false);
+            if (mode == 2)
+                updateCurrentPosition(1f, 1f, false);
         };
         rootView.findViewById(R.id.modeA1).setOnClickListener(modeClick);
         rootView.findViewById(R.id.modeA2).setOnClickListener(modeClick);
@@ -119,14 +121,6 @@ public class MainActivityFragment extends Fragment implements BluetoothLink.List
         sendButton.setTag("LF");
         rootView.findViewById(R.id.sendButton2).setOnClickListener(mSendListener);*/
 
-        updateCurrentPosition(INITIAL_LEFT_POS, INITIAL_RIGHT_POS);
-        m_ratingBar.setOnClickListener(mDefaultInputListener);
-        rootView.findViewById(R.id.textCool).setOnClickListener(v -> {
-            final Activity activity = getActivity();
-            activity.finish();
-            Logger.userVisibleMessage("Goodbye");
-        });
-
         return rootView;
     }
 
@@ -137,7 +131,8 @@ public class MainActivityFragment extends Fragment implements BluetoothLink.List
         // decompose the motion and update the UI
         updateCurrentPosition(
                 -ny * (nx > 0 ? (-nx + 1) : 1),
-                -ny * (nx < 0 ? (nx + 1) : 1)
+                -ny * (nx < 0 ? (nx + 1) : 1),
+                true
         );
     };
 
@@ -146,9 +141,9 @@ public class MainActivityFragment extends Fragment implements BluetoothLink.List
         public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
             if (fromUser) {
                 if (seekBar == mLeftSeekBar)
-                    updateCurrentPosition(((float) progress - 100f) / 100f, mRightEarPos);
+                    updateCurrentPosition(((float) progress - 100f) / 100f, mAxis[1], true);
                 else
-                    updateCurrentPosition(mLeftEarPos, ((float) progress - 100f) / 100f);
+                    updateCurrentPosition(mAxis[0], ((float) progress - 100f) / 100f, true);
             }
         }
 
@@ -161,29 +156,39 @@ public class MainActivityFragment extends Fragment implements BluetoothLink.List
         }
     };
 
-    private final View.OnClickListener mDefaultInputListener = v -> updateCurrentPosition(INITIAL_LEFT_POS, INITIAL_RIGHT_POS);
-
-    private void updateCurrentPosition(float leftPos, float rightPos) {
-        final boolean leftChanged = leftPos != mLeftEarPos;
-        final boolean rightChanged = rightPos != mRightEarPos;
+    private void updateCurrentPosition(float leftPos, float rightPos, boolean send) {
+        final boolean leftChanged = leftPos != mAxis[0];
+        final boolean rightChanged = rightPos != mAxis[1];
         if (!leftChanged && !rightChanged)
             return;
-        mLeftEarPos = leftPos;
-        mRightEarPos = rightPos;
+        mAxis[0] = leftPos;
+        mAxis[1] = rightPos;
 
         if (leftChanged && mLeftSeekBar != null)
-            mLeftSeekBar.setProgress(Math.round(mLeftEarPos * 100f + 100f));
+            mLeftSeekBar.setProgress(Math.round(mAxis[0] * 100f + 100f));
 
         if (rightChanged && mRightSeekBar != null)
-            mRightSeekBar.setProgress(Math.round(mRightEarPos * 100f + 100f));
+            mRightSeekBar.setProgress(Math.round(mAxis[1] * 100f + 100f));
 
         if (mXYInput != null) {
-            if (mLeftEarPos == 1f && mRightEarPos == 1f)
+            if (mAxis[0] == 1 && mAxis[1] == 1)
                 mXYInput.setPoint(0, -1);
-            // don't know how to map the rest for now...
+            else if (mAxis[0] == -1 && mAxis[1] == -1)
+                mXYInput.setPoint(0, 1);
+            else if (mAxis[0] == 0 && mAxis[1] == 1)
+                mXYInput.setPoint(1, -1);
+            else if (mAxis[0] == 1 && mAxis[1] == 0)
+                mXYInput.setPoint(1, 1);
+            else {
+                // TODO: solve this for X and Y
+                // L = -y * (x > 0 ? (-x + 1) : 1);
+                // R = -y * (x < 0 ? (x + 1) : 1),
+                mXYInput.disablePoint();
+            }
         }
 
-        deferTransmission(leftChanged, rightChanged);
+        if (send)
+            deferTransmission(leftChanged, rightChanged);
     }
 
     // delayed transmission (rate limiter) related stuff
@@ -207,11 +212,11 @@ public class MainActivityFragment extends Fragment implements BluetoothLink.List
         public void run() {
             if (mBTLink != null) {
                 if (mDtLeftChanged && mDtRightChanged)
-                    mBTLink.sendEarsPosition(mLeftEarPos, mRightEarPos);
+                    mBTLink.sendEarsPosition(mAxis[0], mAxis[1]);
                 else if (mDtLeftChanged)
-                    mBTLink.sendEarPosition(1, mLeftEarPos);
+                    mBTLink.sendEarPosition(1, mAxis[0]);
                 else
-                    mBTLink.sendEarPosition(2, mRightEarPos);
+                    mBTLink.sendEarPosition(2, mAxis[1]);
             }
             mDtPending = false;
         }

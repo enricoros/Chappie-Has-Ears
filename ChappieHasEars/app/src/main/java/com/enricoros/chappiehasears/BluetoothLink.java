@@ -23,13 +23,12 @@ public class BluetoothLink {
     private final BluetoothAdapter mBluetoothAdapter;
     private final boolean mIsSupported;
 
-    private IntentFilter mBtIntentFilter;
     private boolean mBtReceiverRegistered;
     private BluetoothDevice mBluetoothRemoteDevice;
 
     private boolean mIsConnected;
-    private ConnectThread mConnectThread;
-    private ConnectedThread mConnectedThread;
+    private ConnectionThread mConnectionThread;
+    private CommunicationThread mCommunicationThread;
 
     private static final int COMM_PACKET_SIZE = 5;
     private final byte[] mSendBuffer;
@@ -40,7 +39,7 @@ public class BluetoothLink {
         void onBTConnectionChanged(boolean connected);
     }
 
-    public BluetoothLink(Context context, String btDeviceName) {
+    BluetoothLink(Context context, String btDeviceName) {
         mSendBuffer = new byte[COMM_PACKET_SIZE];
         mContext = context;
         mBtTargetDeviceName = btDeviceName;
@@ -56,12 +55,12 @@ public class BluetoothLink {
         }
 
         // active and enabled
-        mBtIntentFilter = new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED);
-        mBtIntentFilter.addAction(BluetoothDevice.ACTION_FOUND);
-        mBtIntentFilter.addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
-        mBtIntentFilter.addAction(BluetoothDevice.ACTION_ACL_CONNECTED);
-        mBtIntentFilter.addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED);
-        mContext.registerReceiver(mReceiver, mBtIntentFilter);
+        IntentFilter btIntentFilter = new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED);
+        btIntentFilter.addAction(BluetoothDevice.ACTION_FOUND);
+        btIntentFilter.addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
+        btIntentFilter.addAction(BluetoothDevice.ACTION_ACL_CONNECTED);
+        btIntentFilter.addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED);
+        mContext.registerReceiver(mBtNotifications, btIntentFilter);
         mBtReceiverRegistered = true;
 
         // get the device (it may be connected already)
@@ -80,7 +79,7 @@ public class BluetoothLink {
         return mIsSupported;
     }
 
-    public void setListener(Listener listener) {
+    void setListener(Listener listener) {
         mListener = listener;
         if (mListener != null)
             mListener.onBTConnectionChanged(mIsConnected);
@@ -91,7 +90,7 @@ public class BluetoothLink {
      * @param earIndex 1..N
      * @param value    -1: max mack .. 1: max forward
      */
-    public void sendEarPosition(int earIndex, float value) {
+    void sendEarPosition(int earIndex, float value) {
         sendCommand4((byte) 0x01, (byte) earIndex,
                 marshallNormalizePosition(value), 0);
     }
@@ -102,7 +101,7 @@ public class BluetoothLink {
      * @param leftEar  left ear; -1: max back: 0: stop, 1: max forward
      * @param rightEar right ear; -1: max back: 0: stop, 1: max forward
      */
-    public void sendEarsPosition(float leftEar, float rightEar) {
+    void sendEarsPosition(float leftEar, float rightEar) {
         sendCommand4((byte) 0x02, (byte) 0x01,
                 marshallNormalizePosition(leftEar),
                 marshallNormalizePosition(rightEar));
@@ -111,7 +110,7 @@ public class BluetoothLink {
     /**
      * Sets an application dependent flag (not that the rest is not app dependent...)
      */
-    public void sendFlagNumeric(int index, int flag) {
+    void sendFlagNumeric(int index, int flag) {
         sendCommand4((byte) 0x04, (byte) index, (byte) flag, 0);
     }
 
@@ -125,10 +124,10 @@ public class BluetoothLink {
 
     /*** private stuff ahead ***/
 
-    public void doTeardown() {
+    void doTeardown() {
         closeCurrentConnection();
         if (mBtReceiverRegistered) {
-            mContext.unregisterReceiver(mReceiver);
+            mContext.unregisterReceiver(mBtNotifications);
             mBtReceiverRegistered = false;
         }
     }
@@ -137,13 +136,13 @@ public class BluetoothLink {
         if (mBluetoothRemoteDevice != null) {
             mBluetoothRemoteDevice = null;
         }
-        if (mConnectThread != null) {
-            mConnectThread.cancel();
-            mConnectThread = null;
+        if (mConnectionThread != null) {
+            mConnectionThread.cancel();
+            mConnectionThread = null;
         }
-        if (mConnectedThread != null) {
-            mConnectedThread.cancel();
-            mConnectedThread = null;
+        if (mCommunicationThread != null) {
+            mCommunicationThread.cancel();
+            mCommunicationThread = null;
         }
     }
 
@@ -153,21 +152,34 @@ public class BluetoothLink {
             return;
         }
         mBluetoothAdapter.cancelDiscovery();
-        if (mConnectThread != null)
-            mConnectThread.cancel();
-        mConnectThread = new ConnectThread(mBluetoothRemoteDevice);
-        mConnectThread.start();
+        if (mConnectionThread != null)
+            mConnectionThread.cancel();
+        mConnectionThread = new ConnectionThread(mBluetoothRemoteDevice);
+        mConnectionThread.start();
     }
 
-    private class ConnectThread extends Thread {
+    private class ConnectionThread extends Thread {
         private final BluetoothSocket mSocket;
 
-        public ConnectThread(BluetoothDevice device) {
+        ConnectionThread(BluetoothDevice device) {
             BluetoothSocket tmp = null;
+
+            final int bondState = device.getBondState();
+            switch (bondState) {
+                case BluetoothDevice.BOND_BONDED:
+                    Logger.info(device.getName() + " is already bond");
+                    break;
+                case BluetoothDevice.BOND_NONE:
+                    Logger.info("Not yet bond as BT device");
+                    break;
+                case BluetoothDevice.BOND_BONDING:
+                    Logger.info("Bonding...");
+                    break;
+            }
 
             // Get a BluetoothSocket to connect with the given BluetoothDevice
             try {
-                tmp = mBluetoothRemoteDevice.createRfcommSocketToServiceRecord(UUID.fromString(BT_SERIAL_BOARD_UUID));
+                tmp = device.createRfcommSocketToServiceRecord(UUID.fromString(BT_SERIAL_BOARD_UUID));
             } catch (IOException e) {
                 Logger.exception("BluetoothLink.connectToRemoteDevice: error creating Rfcomm socket to " + mBtTargetDeviceName, e);
             }
@@ -179,6 +191,9 @@ public class BluetoothLink {
             try {
                 // Connect the device through the socket. This will block until it succeeds or throws an exception
                 mSocket.connect();
+                // Connected, now start the communication
+                mCommunicationThread = new CommunicationThread(mSocket);
+                mCommunicationThread.start();
             } catch (IOException connectException) {
                 // Unable to connect; close the socket and get out
                 Logger.exception("BluetoothLink.connectToRemoteDevice: error connecting the socket", connectException);
@@ -187,33 +202,37 @@ public class BluetoothLink {
                 } catch (IOException closeException) {
                     Logger.exception("BluetoothLink.connectToRemoteDevice: error cleaning up the socket", closeException);
                 }
-                return;
             }
 
-            // Do work to manage the connection (in a separate thread)
-            Logger.wtf("CONNECTED !!!!!");
-            mConnectedThread = new ConnectedThread(mSocket);
-            mConnectedThread.start();
+            // Notify listeners
+            Logger.info(mSocket.isConnected() ? "Connected" : "Socket not connected");
+            setIsConnected(mSocket.isConnected());
         }
 
         /**
          * Will cancel an in-progress connection, and close the socket
          */
-        public void cancel() {
+        void cancel() {
             try {
                 if (mSocket != null)
                     mSocket.close();
-            } catch (IOException e) {
+            } catch (IOException ignored) {
             }
         }
     }
 
-    private class ConnectedThread extends Thread {
+    private void setIsConnected(boolean connected) {
+        mIsConnected = connected;
+        if (mListener != null && mContext != null)
+            ((MainActivity) mContext).runOnUiThread(() -> mListener.onBTConnectionChanged(connected));
+    }
+
+    private class CommunicationThread extends Thread {
         private final BluetoothSocket mmSocket;
         private final InputStream mmInStream;
         private final OutputStream mmOutStream;
 
-        public ConnectedThread(BluetoothSocket socket) {
+        CommunicationThread(BluetoothSocket socket) {
             mmSocket = socket;
             InputStream tmpIn = null;
             OutputStream tmpOut = null;
@@ -224,7 +243,7 @@ public class BluetoothLink {
                 tmpIn = socket.getInputStream();
                 tmpOut = socket.getOutputStream();
             } catch (IOException e) {
-                Logger.exception("BluetoothLink.connectToRemoteDevice: can't get streams to ConnectedThread", e);
+                Logger.exception("BluetoothLink.connectToRemoteDevice: can't get streams to CommunicationThread", e);
             }
 
             mmInStream = tmpIn;
@@ -252,7 +271,7 @@ public class BluetoothLink {
         }
 
         /* Call this from the main activity to send data to the remote device */
-        public void write(byte[] bytes, int offset, int count) {
+        void write(byte[] bytes, int offset, int count) {
             try {
                 mmOutStream.write(bytes, offset, count);
             } catch (IOException e) {
@@ -261,10 +280,10 @@ public class BluetoothLink {
         }
 
         /* Call this from the main activity to shutdown the connection */
-        public void cancel() {
+        void cancel() {
             try {
                 mmSocket.close();
-            } catch (IOException e) {
+            } catch (IOException ignored) {
             }
         }
     }
@@ -280,13 +299,13 @@ public class BluetoothLink {
         return null;
     }
 
-    private final BroadcastReceiver mReceiver = new BroadcastReceiver() {
+    private final BroadcastReceiver mBtNotifications = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
             String action = intent.getAction();
 
             if (BluetoothAdapter.ACTION_STATE_CHANGED.equals(action)) {
-                Logger.wtf("BluetoothLink.mReceiver: ACTION_STATE_CHANGED to " + intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1) + ", from " + intent.getIntExtra(BluetoothAdapter.EXTRA_PREVIOUS_STATE, -1));
+                Logger.wtf("BluetoothLink.mBtNotifications: ACTION_STATE_CHANGED to " + intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1) + ", from " + intent.getIntExtra(BluetoothAdapter.EXTRA_PREVIOUS_STATE, -1));
             }
             // called for each device that has been found after a scan
             else if (BluetoothDevice.ACTION_FOUND.equals(action)) {
@@ -297,38 +316,33 @@ public class BluetoothLink {
                         Logger.userVisibleMessage("BluetoothLink: ignoring found again: " + mBtTargetDeviceName);
                         return;
                     }
+                    // -> Connect to it!
                     Logger.userVisibleMessage("BluetoothLink: scanned and found " + mBtTargetDeviceName);
                     mBluetoothRemoteDevice = device;
-                    // -> Connect to it!
                     connectToRemoteDevice();
                 }
             } else if (BluetoothDevice.ACTION_ACL_CONNECTED.equals(action)) {
                 // Get the BluetoothDevice object from the Intent
                 BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
-                Logger.userVisibleMessage("BT Target Device Connected");
-                mIsConnected = true;
-                if (mListener != null)
-                    mListener.onBTConnectionChanged(true);
-                // TODO: robustness
+                if (mBtTargetDeviceName.equals(device.getName())) {
+                    // known device name: connect
+                    Logger.userVisibleMessage("BT Connected - Not starting comm though");
+//                    mBluetoothRemoteDevice = device;
+//                    connectToRemoteDevice();
+                }
             }
             // called if/when the device is disconnected
             else if (BluetoothDevice.ACTION_ACL_DISCONNECTED.equals(action)) {
                 // Get the BluetoothDevice object from the Intent
                 BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
-                if (mBluetoothRemoteDevice != null && device != null && device.equals(mBluetoothRemoteDevice)) {
-                    // known device
+                if (device != null && device.equals(mBluetoothRemoteDevice)) {
+                    // our device: disconnect
                     Logger.userVisibleMessage("Bluetooth Device Disconnected");
-                    mIsConnected = false;
-                    if (mListener != null)
-                        mListener.onBTConnectionChanged(false);
                     closeCurrentConnection();
-                } else {
-                    // unknown device
-                    Logger.userVisibleMessage("Unknown Bluetooth Device Disconnected");
-                    //Logger.apierror("BluetoothLink: Unk FIXME!");
+                    setIsConnected(false);
                 }
             } else
-                Logger.wtf("BluetoothLink.mReceiver: unhandled action " + intent.getAction() + ". Fixme.");
+                Logger.wtf("BluetoothLink.mBtNotifications: unhandled action " + intent.getAction() + ". Fixme.");
         }
     };
 
@@ -347,17 +361,17 @@ public class BluetoothLink {
         mSendBuffer[3] = (byte) value1;
         mSendBuffer[4] = (byte) value2;
 
-        if (mConnectedThread != null) {
-            mConnectedThread.write(mSendBuffer, 0, COMM_PACKET_SIZE);
+        if (mCommunicationThread != null) {
+            mCommunicationThread.write(mSendBuffer, 0, COMM_PACKET_SIZE);
             return true;
         }
         return false;
     }
 
     private boolean sendString(String string) {
-        if (mConnectedThread != null) {
+        if (mCommunicationThread != null) {
             byte[] b = string.getBytes(StandardCharsets.US_ASCII);
-            mConnectedThread.write(b, 0, b.length);
+            mCommunicationThread.write(b, 0, b.length);
             return true;
         }
         return false;
