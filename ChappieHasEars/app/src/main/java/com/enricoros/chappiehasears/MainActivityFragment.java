@@ -14,9 +14,9 @@ import android.widget.SeekBar;
  */
 public class MainActivityFragment extends Fragment implements BluetoothLink.Listener {
 
-    public static final String BT_DEVICE_NAME = "Chappie-Ears";
-    public static final float INITIAL_LEFT_POS = 1f;
-    public static final float INITIAL_RIGHT_POS = 1f;
+    private static final String BT_DEVICE_NAME = "Chappie-Ears";
+    private static final float INITIAL_LEFT_POS = 1f;
+    private static final float INITIAL_RIGHT_POS = 1f;
 
     private BluetoothLink mBTLink;
 
@@ -108,13 +108,10 @@ public class MainActivityFragment extends Fragment implements BluetoothLink.List
         checkOpt1.setOnCheckedChangeListener(onCheckedChangeListener);*/
 
         // modes
-        final View.OnClickListener modeClick = new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                int mode = Integer.parseInt((String) v.getTag());
-                if (mBTLink != null)
-                    mBTLink.sendFlagNumeric(4, mode);
-            }
+        final View.OnClickListener modeClick = v -> {
+            int mode = Integer.parseInt((String) v.getTag());
+            if (mBTLink != null)
+                mBTLink.sendFlagNumeric(4, mode);
         };
         rootView.findViewById(R.id.modeA1).setOnClickListener(modeClick);
         rootView.findViewById(R.id.modeA2).setOnClickListener(modeClick);
@@ -130,13 +127,10 @@ public class MainActivityFragment extends Fragment implements BluetoothLink.List
 
         updateCurrentPosition(INITIAL_LEFT_POS, INITIAL_RIGHT_POS);
         m_ratingBar.setOnClickListener(mDefaultInputListener);
-        rootView.findViewById(R.id.textCool).setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                final Activity activity = getActivity();
-                activity.finish();
-                Logger.userVisibleMessage("Goodbye");
-            }
+        rootView.findViewById(R.id.textCool).setOnClickListener(v -> {
+            final Activity activity = getActivity();
+            activity.finish();
+            Logger.userVisibleMessage("Goodbye");
         });
 
         return rootView;
@@ -145,18 +139,15 @@ public class MainActivityFragment extends Fragment implements BluetoothLink.List
 
     // motion related part
 
-    private final XYInputView.Listener mXyInputListener = new XYInputView.Listener() {
-        @Override
-        public void onNewPoint(float nx, float ny) {
-            // decompose the motion and update the UI
-            updateCurrentPosition(
-                    -ny * (nx > 0 ? (-nx + 1) : 1), // left
-                    -ny * (nx < 0 ? (nx + 1) : 1)   // right
-            );
-        }
+    private final XYInputView.Listener mXyInputListener = (nx, ny) -> {
+        // decompose the motion and update the UI
+        updateCurrentPosition(
+                -ny * (nx > 0 ? (-nx + 1) : 1),
+                -ny * (nx < 0 ? (nx + 1) : 1)
+        );
     };
 
-    private SeekBar.OnSeekBarChangeListener mSeekBarsChangeListener = new SeekBar.OnSeekBarChangeListener() {
+    private final SeekBar.OnSeekBarChangeListener mSeekBarsChangeListener = new SeekBar.OnSeekBarChangeListener() {
         @Override
         public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
             if (fromUser) {
@@ -176,12 +167,7 @@ public class MainActivityFragment extends Fragment implements BluetoothLink.List
         }
     };
 
-    private View.OnClickListener mDefaultInputListener = new View.OnClickListener() {
-        @Override
-        public void onClick(View v) {
-            updateCurrentPosition(INITIAL_LEFT_POS, INITIAL_RIGHT_POS);
-        }
-    };
+    private final View.OnClickListener mDefaultInputListener = v -> updateCurrentPosition(INITIAL_LEFT_POS, INITIAL_RIGHT_POS);
 
     private void updateCurrentPosition(float leftPos, float rightPos) {
         final boolean leftChanged = leftPos != mLeftEarPos;
@@ -222,7 +208,7 @@ public class MainActivityFragment extends Fragment implements BluetoothLink.List
         }
     }
 
-    private Runnable mDeferredTransmission = new Runnable() {
+    private final Runnable mDeferredTransmission = new Runnable() {
         @Override
         public void run() {
             if (mBTLink != null) {
