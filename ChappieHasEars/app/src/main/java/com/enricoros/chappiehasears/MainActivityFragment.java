@@ -83,14 +83,14 @@ public class MainActivityFragment extends Fragment implements BluetoothLink.List
                              Bundle savedInstanceState) {
         View rootView = inflater.inflate(R.layout.fragment_main, container, false);
 
-        m_ratingBar = (RatingBar) rootView.findViewById(R.id.ratingBar);
+        m_ratingBar = rootView.findViewById(R.id.ratingBar);
 
-        mXYInput = (XYInputView) rootView.findViewById(R.id.tracerView);
+        mXYInput = rootView.findViewById(R.id.tracerView);
         mXYInput.setListener(mXyInputListener);
 
-        mLeftSeekBar = (SeekBar) rootView.findViewById(R.id.seekBarLeft);
+        mLeftSeekBar = rootView.findViewById(R.id.seekBarLeft);
         mLeftSeekBar.setOnSeekBarChangeListener(mSeekBarsChangeListener);
-        mRightSeekBar = (SeekBar) rootView.findViewById(R.id.seekBarRight);
+        mRightSeekBar = rootView.findViewById(R.id.seekBarRight);
         mRightSeekBar.setOnSeekBarChangeListener(mSeekBarsChangeListener);
 
         // demo / option buttons
