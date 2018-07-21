@@ -8,6 +8,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.RatingBar;
 import android.widget.SeekBar;
+import android.widget.TextView;
 
 /**
  * A placeholder fragment containing a simple view.
@@ -55,7 +56,7 @@ public class MainActivityFragment extends Fragment implements BluetoothLink.List
     @Override
     public void onBTConnectionChanged(boolean connected) {
         if (m_ratingBar != null)
-            m_ratingBar.setRating(connected ? 5 : 1);
+            m_ratingBar.setRating(connected ? 5 : 0.5f);
         if (mLeftSeekBar != null)
             mLeftSeekBar.setEnabled(connected);
         if (mRightSeekBar != null)
@@ -76,6 +77,12 @@ public class MainActivityFragment extends Fragment implements BluetoothLink.List
         mLeftSeekBar.setOnSeekBarChangeListener(mSeekBarsChangeListener);
         mRightSeekBar = rootView.findViewById(R.id.seekBarRight);
         mRightSeekBar.setOnSeekBarChangeListener(mSeekBarsChangeListener);
+
+        // long click to clear the log
+        rootView.findViewById(R.id.msgLog).setOnLongClickListener(view -> {
+            ((TextView) view).setText("");
+            return true;
+        });
 
         // demo / option buttons
         /*final CompoundButton.OnCheckedChangeListener onCheckedChangeListener = new CompoundButton.OnCheckedChangeListener() {

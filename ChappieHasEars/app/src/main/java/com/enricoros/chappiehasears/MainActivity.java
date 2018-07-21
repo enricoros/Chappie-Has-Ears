@@ -8,8 +8,14 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        Logger.setContextForUIMessages(this);
         setContentView(R.layout.activity_main);
+        Logger.setContextForUIMessages(this, findViewById(R.id.msgLog));
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        Logger.setContextForUIMessages(null, null);
     }
 
     @Override

@@ -4,8 +4,8 @@
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:paddingLeft="@dimen/activity_horizontal_margin"
-    android:paddingRight="@dimen/activity_horizontal_margin"
     android:paddingTop="@dimen/activity_vertical_margin"
+    android:paddingRight="@dimen/activity_horizontal_margin"
     tools:context=".MainActivityFragment">
 
     <TextView
@@ -32,8 +32,8 @@
         android:layout_width="300dp"
         android:layout_height="220dp"
         android:layout_gravity="center"
-        android:layout_marginTop="0dp"
-        android:background="#f0722d" />
+        android:background="#f0722d"
+        android:elevation="4dp" />
 
     <SeekBar
         android:id="@+id/seekBarLeft"
@@ -59,7 +59,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:tag="3"
-            android:text="A1"/>
+            android:text="A1" />
 
         <Button
             android:id="@+id/modeA2"
@@ -67,7 +67,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:tag="4"
-            android:text="A2"/>
+            android:text="A2" />
 
         <Button
             android:id="@+id/modeDemo"
@@ -75,7 +75,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:tag="5"
-            android:text="D"/>
+            android:text="D" />
 
         <Button
             android:id="@+id/modeStand"
@@ -83,7 +83,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:tag="2"
-            android:text="Up"/>
+            android:text="Up" />
 
         <Button
             android:id="@+id/modeSit"
@@ -91,7 +91,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:tag="1"
-            android:text="Dn"/>
+            android:text="Dn" />
 
     </LinearLayout>
 
@@ -108,8 +108,16 @@
         android:textColor="#333"
         android:textStyle="italic" />
 
+    <TextView
+        android:id="@+id/msgLog"
+        android:layout_width="fill_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:layout_marginTop="8dp"
+        android:maxLines="8"
+        android:scrollbars="vertical" />
 
-    <EditText
+    <!-- EditText
         android:id="@+id/editSerialComm"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -137,6 +145,6 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="SEND" />
-    </LinearLayout>
+    </LinearLayout -->
 
 </LinearLayout>

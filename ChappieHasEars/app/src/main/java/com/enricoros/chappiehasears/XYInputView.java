@@ -13,8 +13,6 @@ public class XYInputView extends View {
     private final Paint mPtPaint;
     private final Paint mCtPaint;
 
-    private long mStartTimeStamp = 0;
-
     private float mLastNx = 0;
     private float mLastNy = 0;
 
@@ -22,16 +20,20 @@ public class XYInputView extends View {
         super(context, attrs);
 
         mPtPaint = new Paint();
-        mPtPaint.setColor(Color.GREEN);
+        mPtPaint.setColor(Color.BLUE);
+        mPtPaint.setAntiAlias(true);
 
         mCtPaint = new Paint();
         mCtPaint.setColor(Color.WHITE);
+        mCtPaint.setAntiAlias(true);
     }
 
     interface Listener {
         void onNewPoint(float nx, float ny);
     }
+
     private Listener mListener;
+
     public void setListener(Listener listener) {
         mListener = listener;
     }
