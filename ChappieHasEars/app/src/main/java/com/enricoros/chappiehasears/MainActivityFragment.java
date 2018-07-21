@@ -6,11 +6,8 @@ import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.CheckBox;
-import android.widget.CompoundButton;
 import android.widget.RatingBar;
 import android.widget.SeekBar;
-import android.widget.Toast;
 
 /**
  * A placeholder fragment containing a simple view.
@@ -138,7 +135,7 @@ public class MainActivityFragment extends Fragment implements BluetoothLink.List
             public void onClick(View v) {
                 final Activity activity = getActivity();
                 activity.finish();
-                Toast.makeText(activity, "Goodbye", Toast.LENGTH_SHORT);
+                Logger.userVisibleMessage("Goodbye");
             }
         });
 

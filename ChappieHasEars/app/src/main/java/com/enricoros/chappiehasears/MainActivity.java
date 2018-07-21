@@ -18,7 +18,7 @@ public class MainActivity extends Activity {
     @Override
     public void onBackPressed() {
         finish();
-        Toast.makeText(this, "Goodbye", Toast.LENGTH_SHORT);
+        Logger.userVisibleMessage("Goodbye");
     }
 
     /*

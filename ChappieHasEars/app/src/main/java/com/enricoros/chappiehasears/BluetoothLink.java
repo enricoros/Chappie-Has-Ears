@@ -47,7 +47,7 @@ public class BluetoothLink {
 
         // check bluetooth_availability and enablement
         mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
-        mIsSupported = mBluetoothAdapter != null || mBluetoothAdapter.isEnabled();
+        mIsSupported = mBluetoothAdapter != null && mBluetoothAdapter.isEnabled();
         if (!mIsSupported) {
             Logger.userVisibleMessage("Bluetooth can not be used. Please enable it and restart this APP.");
             //Intent enableBtIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
@@ -328,7 +328,7 @@ public class BluetoothLink {
                     closeCurrentConnection();
                 } else {
                     // unknown device
-                    //Logger.userVisibleMessage("Unknown Bluetooth Device Disconnected");
+                    Logger.userVisibleMessage("Unknown Bluetooth Device Disconnected");
                     //Logger.apierror("BluetoothLink: Unk FIXME!");
                 }
             }
