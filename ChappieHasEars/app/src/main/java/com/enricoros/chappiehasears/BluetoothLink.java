@@ -326,7 +326,7 @@ public class BluetoothLink {
                 BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
                 if (mBtTargetDeviceName.equals(device.getName())) {
                     // known device name: connect
-                    Logger.userVisibleMessage("BT Connected - Not starting comm though");
+                    Logger.userVisibleMessage("BT Connected - not starting new action");
 //                    mBluetoothRemoteDevice = device;
 //                    connectToRemoteDevice();
                 }

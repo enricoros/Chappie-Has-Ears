@@ -19,13 +19,30 @@
         android:textColor="#333"
         android:textSize="15dp" />
 
-    <RatingBar
-        android:id="@+id/ratingBar"
+    <LinearLayout
+        style="?android:attr/buttonBarStyle"
         android:layout_width="wrap_content"
+        android:layout_marginTop="8dp"
         android:layout_height="wrap_content"
         android:layout_gravity="center"
-        android:layout_marginTop="8dp"
-        android:rating="1" />
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:text="Bluetooth: "
+            android:textColor="#333"
+            android:textSize="12sp" />
+
+        <RatingBar
+            android:id="@+id/ratingBar"
+            style="@android:style/Widget.DeviceDefault.Light.RatingBar.Small"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:rating="1" />
+
+    </LinearLayout>
 
     <com.enricoros.chappiehasears.XYInputView
         android:id="@+id/tracerView"
@@ -64,7 +81,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:tag="3"
-            android:text="A1" />
+            android:text="A1:H" />
 
         <Button
             android:id="@+id/modeA2"
@@ -73,7 +90,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:tag="4"
-            android:text="A2" />
+            android:text="A2:W" />
 
         <Button
             android:id="@+id/modeDemo"
@@ -82,7 +99,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:tag="5"
-            android:text="D" />
+            android:text="DMO" />
 
         <Button
             android:id="@+id/modeStand"
@@ -113,7 +130,7 @@
         android:gravity="center"
         android:padding="8dp"
         android:text="Don&apos;t laugh, I&apos;m being cool."
-        android:textAppearance="?android:attr/textAppearanceLarge"
+        android:textAppearance="@android:style/TextAppearance.Material.Small"
         android:textColor="#333"
         android:textStyle="italic" />
 
